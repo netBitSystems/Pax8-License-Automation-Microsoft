@@ -1,0 +1,37 @@
+{
+  "tenantKey": "riceland",
+  "displayName": "Riceland Healthcare",
+  "msTenantId": "84324bf7-8acd-43a9-b9a4-e657afdff264",
+  "defaultDomain": "ricelandhealthcare.com",
+  "pax8CompanyId": "597142b6-cdee-460f-b0bc-e3847157b9b3",
+  "pax8CompanyNameHint": "Riceland Healthcare",
+  "microsoftProvisioning": {
+    "mca2020FirstName": "Adam",
+    "mca2020LastName": "Burnaman",
+    "mca2020Email": "services@netbitsystemsllc.com",
+    "mca2020EffectiveDate": "2023-06-19",
+    "msftContactFirstName": "Dylan",
+    "msftContactLastName": "Rumsey",
+    "msftContactEmail": "netbit@ricelandhealthcare.com"
+  },
+  "skuMap": [
+    { "skuPartNumber": "O365_BUSINESS_PREMIUM",   "skuId": "f245ecc8-75af-4f8e-b61f-27d8114de5f3", "pax8ProductNameHint": "Microsoft 365 Business Standard", "buffer": 15, "maxSeats": 450 },
+    { "skuPartNumber": "O365_BUSINESS_ESSENTIALS","skuId": "3b555118-da6a-4418-894f-7df1e2096870", "pax8ProductNameHint": "Microsoft 365 Business Basic",    "buffer": 15, "maxSeats": 260 },
+    { "skuPartNumber": "EXCHANGESTANDARD",         "skuId": "4b9405b0-7788-4568-add1-99614e613b69", "pax8ProductNameHint": "Exchange Online (Plan 1)",        "buffer": 15, "maxSeats": 260 },
+    { "skuPartNumber": "EXCHANGEENTERPRISE",       "skuId": "19ec0d23-8335-4cbd-94ac-6050e30712fa", "pax8ProductNameHint": "Exchange Online (Plan 2)",        "buffer": 5,  "maxSeats": 60 },
+    { "skuPartNumber": "Microsoft_365_Copilot",    "skuId": "639dec6b-bb19-468b-871c-c5c441c4b0cb", "pax8ProductNameHint": "Microsoft 365 Copilot",           "buffer": 1,  "maxSeats": 25 },
+    { "skuPartNumber": "Microsoft_365_E5_(no_Teams)", "skuId": "18a4bd3f-0b5b-4887-b04f-61dd0ee15f5e", "pax8ProductNameHint": "Microsoft 365 E5 (no Teams)",  "buffer": 0,  "maxSeats": 5 },
+    { "skuPartNumber": "Microsoft_Teams_Enterprise_New", "skuId": "7e31c0d9-9551-471d-836f-32ee72be4a01", "pax8ProductNameHint": "Microsoft Teams Enterprise", "buffer": 0, "maxSeats": 5 },
+    { "skuPartNumber": "Microsoft_Teams_Premium",  "skuId": "36a0f3b3-adb5-49ea-bf66-762134cf063a", "pax8ProductNameHint": "Microsoft Teams Premium",         "buffer": 0,  "maxSeats": 5 },
+    { "skuPartNumber": "Microsoft_Teams_Rooms_Pro_without_Audio_Conferencing", "skuId": "21943e3a-2429-4f83-84c1-02735cd49e78", "pax8ProductNameHint": "Microsoft Teams Rooms Pro", "buffer": 0, "maxSeats": 5 },
+    { "skuPartNumber": "PBI_PREMIUM_PER_USER",     "skuId": "c1d032e0-5619-4761-9b5c-75b6831e1711", "pax8ProductNameHint": "Power BI Premium Per User",      "buffer": 0,  "maxSeats": 10 },
+    { "skuPartNumber": "POWERAPPS_PER_USER",       "skuId": "b30411f5-fea1-4a59-9ad9-3db7c7ead579", "pax8ProductNameHint": "Power Apps Premium",              "buffer": 0,  "maxSeats": 10 },
+    { "skuPartNumber": "VISIOCLIENT",              "skuId": "c5928f49-12ba-48f7-ada3-0d743a3601d5", "pax8ProductNameHint": "Visio Plan 2",                    "buffer": 1,  "maxSeats": 10 }
+  ],
+  "ignoreSkuPartNumbers": [
+    "DYN365_AI_SERVICE_INSIGHTS", "FLOW_FREE", "POWER_BI_STANDARD", "CCIBOTS_PRIVPREV_VIRAL",
+    "POWERAPPS_DEV", "POWERAPPS_VIRAL", "WINDOWS_STORE", "TEAMS_EXPLORATORY",
+    "Microsoft_Teams_Rooms_Basic", "Microsoft_Teams_Audio_Conferencing_select_dial_out",
+    "Teams_Premium_(for_Departments)"
+  ]
+}

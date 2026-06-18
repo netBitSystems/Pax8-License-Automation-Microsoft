@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "dryRun": true,
+  "requireApproval": true,
+  "mode": "Both",
+  "leadDays": 14,
+  "billingTerm": "Annual",
+  "guardrails": {
+    "perRunMaxIncreasePerSku": 25,
+    "defaultBuffer": 2,
+    "defaultMaxSeats": 50
+  },
+  "pax8": {
+    "tokenUrl": "https://api.pax8.com/v1/token",
+    "baseUrl": "https://api.pax8.com/v1",
+    "audience": "https://api.pax8.com",
+    "locationMpnId": "6107056",
+    "orderedByUserEmail": "services@netbitsystemsllc.com",
+    "useMockOrders": true
+  },
+  "graph": {
+    "scopes": ["Organization.Read.All", "Directory.Read.All"],
+    "appClientId": "",
+    "certificateThumbprint": ""
+  },
+  "logging": {
+    "directory": "D:\\Pax8LicenseAutomation\\logs",
+    "retainDays": 90
+  },
+  "alert": {
+    "method": "email",
+    "target": "services@netbitsystemsllc.com",
+    "fromMailbox": "netbit@ricelandhealthcare.com"
+  }
+}

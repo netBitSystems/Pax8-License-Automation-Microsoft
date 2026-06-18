@@ -1,0 +1,5 @@
+# Never commit the local encrypted credential store or run logs
+config/credentials.local.xml
+logs/
+*.jsonl
+*.log

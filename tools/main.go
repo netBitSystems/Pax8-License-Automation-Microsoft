@@ -23,16 +23,16 @@ import (
 
 // ── ANSI colors ────────────────────────────────────────────────────────────
 const (
-	appVersion = "v1.1 - single-client deployment"
-	cReset  = "\033[0m"
-	cBlue   = "\033[34m"
-	cCyan   = "\033[36m"
-	cGreen  = "\033[32m"
-	cRed    = "\033[31m"
-	cYellow = "\033[33m"
-	cGray   = "\033[90m"
-	cWhite  = "\033[97m"
-	cBold   = "\033[1m"
+	appVersion = "v1.2 - single-client deployment"
+	cReset     = "\033[0m"
+	cBlue      = "\033[34m"
+	cCyan      = "\033[36m"
+	cGreen     = "\033[32m"
+	cRed       = "\033[31m"
+	cYellow    = "\033[33m"
+	cGray      = "\033[90m"
+	cWhite     = "\033[97m"
+	cBold      = "\033[1m"
 )
 
 // ── Globals ────────────────────────────────────────────────────────────────
@@ -89,16 +89,16 @@ type Provisioning struct {
 }
 
 type TenantConfig struct {
-	TenantKey              string       `json:"tenantKey"`
-	DisplayName            string       `json:"displayName"`
-	MsTenantId             string       `json:"msTenantId"`
-	DefaultDomain          string       `json:"defaultDomain"`
-	Greenfield             bool         `json:"greenfield"`
-	Pax8CompanyId          string       `json:"pax8CompanyId"`
-	Pax8CompanyNameHint    string       `json:"pax8CompanyNameHint"`
-	MicrosoftProvisioning  Provisioning `json:"microsoftProvisioning"`
-	SkuMap                 []SkuMapEntry `json:"skuMap"`
-	IgnoreSkuPartNumbers   []string     `json:"ignoreSkuPartNumbers"`
+	TenantKey             string        `json:"tenantKey"`
+	DisplayName           string        `json:"displayName"`
+	MsTenantId            string        `json:"msTenantId"`
+	DefaultDomain         string        `json:"defaultDomain"`
+	Greenfield            bool          `json:"greenfield"`
+	Pax8CompanyId         string        `json:"pax8CompanyId"`
+	Pax8CompanyNameHint   string        `json:"pax8CompanyNameHint"`
+	MicrosoftProvisioning Provisioning  `json:"microsoftProvisioning"`
+	SkuMap                []SkuMapEntry `json:"skuMap"`
+	IgnoreSkuPartNumbers  []string      `json:"ignoreSkuPartNumbers"`
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────
@@ -161,17 +161,7 @@ func runSetup() {
 		step("Integrations > Overview > API keys generated > Add API Credential")
 		step("Enter a client name and click Add. Copy the Client ID and Client Secret.")
 		fmt.Println()
-		for pax8Token == "" {
-			creds.Pax8ClientId = ask("  Client ID")
-			creds.Pax8ClientSecret = ask("  Client Secret")
-			tok, err := getPax8Token(creds.Pax8ClientId, creds.Pax8ClientSecret)
-			if err == nil {
-				pax8Token = tok
-				ok("Connected to Pax8")
-			} else {
-				fail("Connection failed: " + err.Error())
-			}
-		}
+		creds, pax8Token = promptForPax8Credentials(creds)
 	}
 
 	// ── 2. Entra ──
@@ -277,7 +267,10 @@ func runSetup() {
 	step("Type should always be String.")
 	fmt.Println()
 
-	vars := []struct{ name, value string; enc bool }{
+	vars := []struct {
+		name, value string
+		enc         bool
+	}{
 		{"GitHubOwnerRepo", "netBitSystems/Pax8-License-Automation-Microsoft", false},
 		{"GitHubBranch", "main", false},
 		{"Pax8ClientId", creds.Pax8ClientId, true},
@@ -364,10 +357,21 @@ func runAddClient() {
 	bar("Add New Client", "")
 
 	creds := loadCreds()
-	if creds.Pax8ClientId == "" {
-		fail("Run setup first (option 1) to configure credentials.")
-		wait("Press Enter")
-		return
+	pax8Token := ""
+	if creds.Pax8ClientId != "" && creds.Pax8ClientSecret != "" {
+		tok, err := getPax8Token(creds.Pax8ClientId, creds.Pax8ClientSecret)
+		if err == nil {
+			pax8Token = tok
+		}
+	}
+	if pax8Token == "" {
+		fmt.Println()
+		step("Pax8 credentials are needed to search the live Pax8 product catalog.")
+		step("If you have not created them yet:")
+		step("  Pax8 portal > Integrations > Overview > API keys generated > Add API Credential")
+		fmt.Println()
+		creds, pax8Token = promptForPax8Credentials(creds)
+		saveCreds(creds)
 	}
 
 	fmt.Println()
@@ -416,13 +420,6 @@ func runAddClient() {
 	// Pax8 product matching
 	bar("Pax8 Product Matching", "Search the live Pax8 catalog for each license.")
 	fmt.Printf("  %sLoading Pax8 products...%s\n\n", cGray, cReset)
-
-	pax8Token, err := getPax8Token(creds.Pax8ClientId, creds.Pax8ClientSecret)
-	if err != nil {
-		fail("Pax8 connection failed: " + err.Error())
-		wait("Press Enter")
-		return
-	}
 
 	products, err := getAllPax8Products(pax8Token)
 	if err != nil {
@@ -623,6 +620,20 @@ func getPax8Token(clientId, clientSecret string) (string, error) {
 	return tok.AccessToken, nil
 }
 
+func promptForPax8Credentials(creds Credentials) (Credentials, string) {
+	for {
+		creds.Pax8ClientId = ask("  Client ID")
+		creds.Pax8ClientSecret = ask("  Client Secret")
+		token, err := getPax8Token(creds.Pax8ClientId, creds.Pax8ClientSecret)
+		if err == nil {
+			ok("Connected to Pax8")
+			return creds, token
+		}
+		fail("Connection failed: " + err.Error())
+		fmt.Println("  Check the values and try again.")
+	}
+}
+
 func getAllPax8Products(token string) ([]Pax8Product, error) {
 	var all []Pax8Product
 	page := 0
@@ -752,9 +763,9 @@ func section(num, title string) {
 	fmt.Printf("%s%s── %s ─── %s%s\n\n", cBlue, cBold, num, title, cReset)
 }
 
-func step(text string)        { fmt.Printf("  %s%s\n", text, cReset) }
-func ok(text string)          { fmt.Printf("  %s✓  %s%s\n", cGreen, text, cReset) }
-func fail(text string)        { fmt.Printf("  %s✗  %s%s\n", cRed, text, cReset) }
+func step(text string) { fmt.Printf("  %s%s\n", text, cReset) }
+func ok(text string)   { fmt.Printf("  %s✓  %s%s\n", cGreen, text, cReset) }
+func fail(text string) { fmt.Printf("  %s✗  %s%s\n", cRed, text, cReset) }
 
 func ask(prompt string) string {
 	fmt.Printf("%s: ", prompt)

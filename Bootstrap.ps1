@@ -103,5 +103,15 @@ Write-Host ''
 
 $launch = Read-Host '  Launch setup now? (Y/n)'
 if ($launch -notmatch '^[Nn]') {
-    & pwsh -ExecutionPolicy Bypass -NoProfile -File (Join-Path $InstallPath 'Initialize-Automation.ps1')
+    # Download pax8tools.exe from the release
+    Write-Host '  Downloading pax8tools.exe...' -ForegroundColor Cyan
+    $exeUrl = 'https://github.com/netBitSystems/Pax8-License-Automation-Microsoft/releases/latest/download/pax8tools.exe'
+    $exeDst = Join-Path $InstallPath 'pax8tools.exe'
+    try {
+        Invoke-WebRequest -Uri $exeUrl -OutFile $exeDst -UseBasicParsing
+        Write-Host '  Launching...' -ForegroundColor Green
+        Start-Process -FilePath $exeDst -WorkingDirectory $InstallPath
+    } catch {
+        Write-Host '  Could not download pax8tools.exe. Run Launch-Pax8Tools.bat from the install folder.' -ForegroundColor Yellow
+    }
 }

@@ -67,6 +67,11 @@ type Pax8Product struct {
 	Name string `json:"name"`
 }
 
+type Pax8Company struct {
+	Id   string `json:"id"`
+	Name string `json:"name"`
+}
+
 type SkuMapEntry struct {
 	SkuPartNumber       string `json:"skuPartNumber"`
 	SkuId               string `json:"skuId"`
@@ -246,9 +251,41 @@ func runClientWizard() {
 	domain := ask("  Primary domain")
 
 	fmt.Println()
-	step("Pax8 company name:")
-	step("  Where to find: Pax8 portal → Companies tab → find the client → copy the name exactly as shown")
-	pax8Company := ask("  Pax8 company name")
+	step("Pax8 company:")
+	step("  Where to find: Pax8 portal → Companies tab → find the client")
+	fmt.Printf("  %sSearching Pax8 companies...%s\n", cGray, cReset)
+	companies, compErr := getAllPax8Companies(pax8Token)
+	var pax8CompanyId, pax8Company string
+	if compErr != nil || len(companies) == 0 {
+		fail("Could not load companies from Pax8 — entering name manually.")
+		pax8Company = ask("  Pax8 company name")
+	} else {
+		fmt.Printf("  %s%d companies loaded.%s\n", cGray, len(companies), cReset)
+		for pax8CompanyId == "" {
+			searchTerm := ask("  Search company name")
+			matches := searchCompanies(companies, searchTerm)
+			if len(matches) == 0 {
+				fmt.Printf("  %sNo matches.%s Try a different term.\n", cRed, cReset)
+				continue
+			}
+			limit := 10
+			if len(matches) < limit {
+				limit = len(matches)
+			}
+			fmt.Println()
+			for i := 0; i < limit; i++ {
+				fmt.Printf("  [%d] %s\n", i+1, matches[i].Name)
+			}
+			fmt.Printf("  [0] Search again\n\n")
+			pickStr := ask("  Select number")
+			n, parseErr := strconv.Atoi(pickStr)
+			if parseErr == nil && n >= 1 && n <= limit {
+				pax8CompanyId = matches[n-1].Id
+				pax8Company = matches[n-1].Name
+				fmt.Printf("  %s✓ %s  (%s)%s\n", cGreen, pax8Company, pax8CompanyId, cReset)
+			}
+		}
+	}
 
 	tenantKey := regexp.MustCompile(`[^a-z0-9]`).ReplaceAllString(strings.ToLower(displayName), "")
 	if len(tenantKey) > 20 {
@@ -333,7 +370,7 @@ func runClientWizard() {
 		MsTenantId:          tenantId,
 		DefaultDomain:       domain,
 		Greenfield:          greenfield,
-		Pax8CompanyId:       "",
+		Pax8CompanyId:       pax8CompanyId,
 		Pax8CompanyNameHint: pax8Company,
 		MicrosoftProvisioning: Provisioning{
 			Mca2020FirstName:     "Adam",
@@ -708,6 +745,50 @@ func getAllPax8Products(token string) ([]Pax8Product, error) {
 		page++
 	}
 	return all, nil
+}
+
+func getAllPax8Companies(token string) ([]Pax8Company, error) {
+	var all []Pax8Company
+	page := 0
+	for {
+		url := fmt.Sprintf("https://api.pax8.com/v1/companies?page=%d&size=200", page)
+		req, _ := http.NewRequest("GET", url, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		var pr struct {
+			Content []Pax8Company `json:"content"`
+			Page    struct {
+				TotalPages int `json:"totalPages"`
+			} `json:"page"`
+		}
+		json.Unmarshal(bodyBytes, &pr)
+		all = append(all, pr.Content...)
+		if page >= pr.Page.TotalPages-1 || pr.Page.TotalPages == 0 {
+			break
+		}
+		page++
+	}
+	return all, nil
+}
+
+func searchCompanies(companies []Pax8Company, term string) []Pax8Company {
+	termRe := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(term))
+	var matches []Pax8Company
+	for _, c := range companies {
+		if termRe.MatchString(c.Name) {
+			matches = append(matches, c)
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		return len(matches[i].Name) < len(matches[j].Name)
+	})
+	return matches
 }
 
 func searchProducts(products []Pax8Product, term string) []Pax8Product {

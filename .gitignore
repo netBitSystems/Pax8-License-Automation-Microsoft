@@ -8,5 +8,8 @@ logs/
 # Never commit the compiled binary
 pax8tools.exe
 
+# Local developer handoff doc (contains internal tenant details)
+PROJECT-STATUS.md
+
 # Downloaded Azure Automation module packages
 Microsoft.Graph.*.zip

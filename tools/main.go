@@ -181,7 +181,7 @@ func runSetup() {
 		step("Go to:  " + cCyan + "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/CreateApplicationBlade" + cReset)
 		fmt.Println()
 		step("  Name:           Pax8 License Automation")
-		step("  Account type:   Accounts in any organizational directory (Multitenant)")
+		step("  Account type:   Accounts in this organizational directory only (Single tenant)")
 		step("  Redirect URI:   leave blank  →  click Register")
 		fmt.Println()
 		step("API permissions > Add > Microsoft Graph > Application permissions:")

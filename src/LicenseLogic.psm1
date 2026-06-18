@@ -64,6 +64,9 @@ function New-LicensePlan {
             } elseif ($renewSoon) {
                 $action = 'transition'
                 $reason = "Renewal date $($renewDate.ToString('yyyy-MM-dd')); order $desired seats on Pax8"
+            } elseif ([bool]$TenantConfig.greenfield) {
+                $action = 'order'
+                $reason = "Greenfield: no existing Pax8 subscription; ordering $desired seats"
             } else {
                 $action = 'wait'
                 $reason = "No active Pax8 subscription; renewal not within $leadDays days"
@@ -83,6 +86,7 @@ function New-LicensePlan {
             Action              = $action
             DeltaSeats          = $delta
             RenewDate           = if ($renewDate) { $renewDate.ToString('yyyy-MM-dd') } else { '' }
+            Pax8ProductId       = if ($entry.pax8ProductId) { $entry.pax8ProductId } else { '' }
             Pax8ProductNameHint = $entry.pax8ProductNameHint
             Pax8SubscriptionId  = if ($pax8Sub) { $pax8Sub.id } else { '' }
             Reason              = $reason

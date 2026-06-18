@@ -110,9 +110,9 @@ foreach ($tf in $tenantFiles) {
         $doIt = $false
         if ($p.DeltaSeats -gt 0) {
             switch ($Mode) {
-                'Both'       { $doIt = $p.Action -in 'topup','transition' }
+                'Both'       { $doIt = $p.Action -in 'topup','transition','order' }
                 'TopUp'      { $doIt = $p.Action -eq 'topup' }
-                'Transition' { $doIt = $p.Action -eq 'transition' }
+                'Transition' { $doIt = $p.Action -in 'transition','order' }
             }
         }
         if (-not $doIt) { continue }
@@ -136,13 +136,18 @@ foreach ($tf in $tenantFiles) {
                     Set-Pax8SubscriptionQuantity -SubscriptionId $p.Pax8SubscriptionId -Quantity $p.Desired
                 }
             } else {
-                $prod = Resolve-Pax8ProductId -NameHint $p.Pax8ProductNameHint
-                if ($prod) {
-                    $ctId = Get-Pax8CommitmentTermId -ProductId $prod.id -BillingTerm $settings.billingTerm
+                # Prefer the stored product ID from tenant config (set by the onboarding wizard).
+                # Fall back to name-hint resolution for legacy configs.
+                $prodId = if ($p.Pax8ProductId) { $p.Pax8ProductId } else {
+                    $resolved = Resolve-Pax8ProductId -NameHint $p.Pax8ProductNameHint
+                    if ($resolved) { $resolved.id } else { $null }
+                }
+                if ($prodId) {
+                    $ctId = Get-Pax8CommitmentTermId -ProductId $prodId -BillingTerm $settings.billingTerm
                     $pd   = Get-MicrosoftProvisioningDetails -TenantConfig $tenant -LocationMpnId $settings.pax8.locationMpnId
-                    New-Pax8Order -CompanyId $companyId -ProductId $prod.id -Quantity $p.Desired -BillingTerm $settings.billingTerm -CommitmentTermId $ctId -ProvisioningDetails $pd -OrderedByUserEmail $settings.pax8.orderedByUserEmail -IsMock:$useMock
+                    New-Pax8Order -CompanyId $companyId -ProductId $prodId -Quantity $p.Desired -BillingTerm $settings.billingTerm -CommitmentTermId $ctId -ProvisioningDetails $pd -OrderedByUserEmail $settings.pax8.orderedByUserEmail -IsMock:$useMock
                 } else {
-                    Write-Log -Level ERROR -Message ("No Pax8 product for {0}; cannot order." -f $p.SkuPartNumber)
+                    Write-Log -Level ERROR -Message ("No Pax8 product ID for {0}; cannot order. Use the onboarding wizard to set pax8ProductId, or add a pax8ProductNameHint to the tenant config." -f $p.SkuPartNumber)
                 }
             }
         } catch {

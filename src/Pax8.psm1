@@ -209,6 +209,25 @@ function New-Pax8Order {
     return Invoke-Pax8 -Method POST -Path 'orders' -Query $query -Body $body
 }
 
+function Search-Pax8Products {
+    # Search the cached product list by a plain-text term.
+    # Used by the onboarding wizard. Excludes non-commercial variants.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$SearchTerm)
+    $products = Get-Pax8Products
+    $exclude  = 'Government|Governmental|GCC|Non-?Profit|Education|Student|Faculty|Charity|Trial|Promo'
+    $term     = [regex]::Escape($SearchTerm.Trim())
+    $results  = $products | Where-Object {
+        $_.name -match "(?i)$term" -and $_.name -notmatch $exclude
+    } | Sort-Object @{
+        Expression = { if ($_.name -like '*New Commerce Experience*') { 0 } else { 1 } }
+    }, @{
+        Expression = { $_.name.Length }
+    } | Select-Object -First 50
+    Write-Log -Level INFO -Message ("Pax8 product search '{0}': {1} results" -f $SearchTerm, @($results).Count)
+    return @($results)
+}
+
 function Set-Pax8SubscriptionQuantity {
     [CmdletBinding()]
     param(
@@ -221,4 +240,4 @@ function Set-Pax8SubscriptionQuantity {
     return Invoke-Pax8 -Method PUT -Path "subscriptions/$SubscriptionId" -Body $body
 }
 
-Export-ModuleMember -Function Connect-Pax8, Get-Pax8Token, Invoke-Pax8, Get-Pax8AllPages, Get-Pax8Company, Get-Pax8Subscriptions, Get-Pax8Products, Resolve-Pax8ProductId, Get-Pax8CommitmentTermId, Get-MicrosoftProvisioningDetails, New-Pax8Order, Set-Pax8SubscriptionQuantity
+Export-ModuleMember -Function Connect-Pax8, Get-Pax8Token, Invoke-Pax8, Get-Pax8AllPages, Get-Pax8Company, Get-Pax8Subscriptions, Get-Pax8Products, Resolve-Pax8ProductId, Search-Pax8Products, Get-Pax8CommitmentTermId, Get-MicrosoftProvisioningDetails, New-Pax8Order, Set-Pax8SubscriptionQuantity

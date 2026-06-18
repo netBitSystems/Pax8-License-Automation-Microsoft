@@ -145,7 +145,7 @@ func runSetup() {
 	creds := loadCreds()
 
 	// ── 1. Pax8 ──
-	section("1 / 4", "Pax8 API Credential")
+	section("1 / 3", "Pax8 API Credential")
 	pax8Token := ""
 	if creds.Pax8ClientId != "" && creds.Pax8ClientSecret != "" {
 		tok, err := getPax8Token(creds.Pax8ClientId, creds.Pax8ClientSecret)
@@ -173,7 +173,7 @@ func runSetup() {
 	}
 
 	// ── 2. Entra ──
-	section("2 / 4", "Microsoft Entra App Registration")
+	section("2 / 3", "Microsoft Entra App Registration")
 	guidRe := regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	if creds.GraphClientId != "" && guidRe.MatchString(creds.GraphClientId) && len(creds.GraphClientSecret) > 10 {
 		ok("Graph credentials already on file — skipped")
@@ -204,30 +204,8 @@ func runSetup() {
 	saveCreds(creds)
 	ok("Credentials saved to " + credPath())
 
-	// ── 3. GitHub PAT ──
-	section("3 / 4", "GitHub Read Token")
-	if creds.GitHubPat != "" && len(creds.GitHubPat) > 10 {
-		ok("GitHub token already on file — skipped")
-	} else {
-		step("Go to:  " + cCyan + "https://github.com/settings/personal-access-tokens" + cReset)
-		fmt.Println()
-		step("  Token name:         Pax8-Automation-Runbook")
-		step("  Resource owner:     netBitSystems")
-		step("  Repository access:  Only Pax8-License-Automation-Microsoft")
-		step("  Contents permission: Read-only  (everything else: No access)")
-		fmt.Println()
-		for len(creds.GitHubPat) <= 10 {
-			creds.GitHubPat = ask("  Paste token")
-			if len(creds.GitHubPat) <= 10 {
-				fail("Too short — paste the full token.")
-			}
-		}
-		saveCreds(creds)
-		ok("Token saved")
-	}
-
-	// ── 4. Azure Automation ──
-	section("4 / 4", "Azure Automation")
+	// ── 3. Azure Automation ──
+	section("3 / 3", "Azure Automation")
 
 	fmt.Printf("\n  %sStep A — Create Automation account + import modules%s\n\n", cWhite, cReset)
 	step("Go to:  " + cCyan + "https://portal.azure.com/#create/Microsoft.AutomationAccount" + cReset)
@@ -241,12 +219,11 @@ func runSetup() {
 
 	fmt.Printf("\n  %sStep B — Create Automation Variables%s\n", cWhite, cReset)
 	fmt.Printf("  %sShared Resources > Variables > Add a variable (Type = String)%s\n", cGray, cReset)
-	fmt.Printf("  %sVariables marked [ENC] must have Encrypted toggled ON.%s\n\n", cGray, cReset)
+	fmt.Printf("  %s9 variables total. Variables marked [ENC] must have Encrypted toggled ON.%s\n\n", cGray, cReset)
 
 	vars := []struct{ name, value string; enc bool }{
 		{"GitHubOwnerRepo", "netBitSystems/Pax8-License-Automation-Microsoft", false},
 		{"GitHubBranch", "main", false},
-		{"GitHubPat", creds.GitHubPat, true},
 		{"Pax8ClientId", creds.Pax8ClientId, true},
 		{"Pax8ClientSecret", creds.Pax8ClientSecret, true},
 		{"GraphClientId", creds.GraphClientId, true},
@@ -265,7 +242,7 @@ func runSetup() {
 		fmt.Printf("  %s%s  %-24s %s%s\n", col, tag, v.name, v.value, cReset)
 	}
 	fmt.Println()
-	wait("Press Enter once all 10 variables are created")
+	wait("Press Enter once all 9 variables are created")
 
 	fmt.Printf("\n  %sStep C — Create the runbook%s\n\n", cWhite, cReset)
 	step("Process Automation > Runbooks > Create a runbook")

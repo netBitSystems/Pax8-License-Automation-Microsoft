@@ -1,13 +1,12 @@
 <#
 .SYNOPSIS
-  Azure Automation runbook. Pulls the latest project from a private GitHub repo and runs the sync.
+  Azure Automation runbook. Pulls the latest project from GitHub and runs the sync.
 .DESCRIPTION
   This is the only file you import into Azure Automation as a runbook. It downloads the current project
   from GitHub on every run, so updating the automation is just a git commit.
 
   Required Automation Variables:
-    GitHubOwnerRepo    'owner/repo' of the private project repo
-    GitHubPat          a GitHub PAT with read access to that repo (mark as encrypted)
+    GitHubOwnerRepo    'owner/repo' of the public project repo
     Pax8ClientId, Pax8ClientSecret, GraphClientId, GraphClientSecret   (mark secrets as encrypted)
   Optional Automation Variables:
     GitHubBranch       branch to pull (default 'main')
@@ -28,7 +27,6 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $ownerRepo = Get-AutomationVariable -Name 'GitHubOwnerRepo'
-$pat       = Get-AutomationVariable -Name 'GitHubPat'
 $branch    = try { Get-AutomationVariable -Name 'GitHubBranch' } catch { $null }
 if (-not $branch) { $branch = 'main' }
 if (-not $Mode)        { try { $Mode = Get-AutomationVariable -Name 'RunMode' } catch { } }
@@ -40,8 +38,7 @@ Write-Output ("Fetching {0}@{1} from GitHub..." -f $ownerRepo, $branch)
 $work = Join-Path $env:TEMP ('pax8-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work -Force | Out-Null
 $zip = Join-Path $work 'repo.zip'
-$headers = @{ Authorization = "token $pat"; 'User-Agent' = 'pax8-license-automation'; Accept = 'application/vnd.github+json' }
-Invoke-WebRequest -Uri ("https://api.github.com/repos/{0}/zipball/{1}" -f $ownerRepo, $branch) -Headers $headers -OutFile $zip
+Invoke-WebRequest -Uri ("https://github.com/{0}/archive/refs/heads/{1}.zip" -f $ownerRepo, $branch) -OutFile $zip -UseBasicParsing
 Expand-Archive -Path $zip -DestinationPath $work -Force
 
 $proj = Get-ChildItem -Path $work -Directory | Select-Object -First 1

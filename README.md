@@ -1,5 +1,7 @@
 # Pax8 License Automation
 
+**New here? Open `START-HERE.md` first. It covers the full setup and add-client workflows in plain English.**
+
 Reusable, multi-tenant automation that manages Microsoft 365 licensing through Pax8. One deployment
 covers any number of clients. The Microsoft side is read-only. Every seat change is a write to Pax8
 only. License assignment to users stays manual in the admin center.

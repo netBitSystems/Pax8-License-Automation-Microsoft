@@ -118,11 +118,8 @@ func showMenu() {
 	fmt.Println()
 	fmt.Printf("  %s[1]%s  First-time setup\n", cCyan, cReset)
 	fmt.Printf("  %s[2]%s  Add a new client\n", cCyan, cReset)
-	fmt.Printf("  %s[3]%s  Run local dry-run test\n", cCyan, cReset)
-	fmt.Printf("  %s[4]%s  Run live mock test    (no spend)\n", cCyan, cReset)
-	fmt.Printf("  %s[5]%s  Sync to GitHub\n", cCyan, cReset)
-	fmt.Printf("  %s[6]%s  Open project folder\n", cCyan, cReset)
-	fmt.Printf("  %s[7]%s  Exit\n", cCyan, cReset)
+	fmt.Printf("  %s[3]%s  Verify it's working\n", cCyan, cReset)
+	fmt.Printf("  %s[4]%s  Exit\n", cCyan, cReset)
 	fmt.Println()
 	choice := ask("  Enter choice")
 	switch choice {
@@ -133,12 +130,6 @@ func showMenu() {
 	case "3":
 		runPwsh("Test-Local.ps1", false)
 	case "4":
-		runPwsh("Invoke-LiveTest.ps1", false)
-	case "5":
-		runSync()
-	case "6":
-		exec.Command("explorer", root).Start()
-	case "7":
 		os.Exit(0)
 	}
 }

@@ -23,6 +23,7 @@ import (
 
 // ── ANSI colors ────────────────────────────────────────────────────────────
 const (
+	appVersion = "v1.1 - single-client deployment"
 	cReset  = "\033[0m"
 	cBlue   = "\033[34m"
 	cCyan   = "\033[36m"
@@ -115,6 +116,7 @@ func main() {
 func showMenu() {
 	cls()
 	bar("Pax8 License Automation", "")
+	fmt.Printf("  %s%s%s\n\n", cGray, appVersion, cReset)
 	fmt.Println()
 	fmt.Printf("  %s[1]%s  First-time setup\n", cCyan, cReset)
 	fmt.Printf("  %s[2]%s  Add a new client\n", cCyan, cReset)

@@ -30,6 +30,6 @@
   "alert": {
     "method": "email",
     "target": "services@netbitsystemsllc.com",
-    "fromMailbox": "netbit@ricelandhealthcare.com"
+    "fromMailbox": ""
   }
 }

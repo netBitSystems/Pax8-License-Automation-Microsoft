@@ -163,7 +163,13 @@ foreach ($tf in $tenantFiles) {
         $subject = 'Pax8 License Sync [{0}] {1} - {2} action(s), {3} error(s)' -f $runType, $tenant.displayName, $actionable.Count, $err
         $alertBody = "Tenant: {0}`nMode: {1}`n`n{2}" -f $tenant.displayName, $runType, ($lines -join "`n")
         if ($err) { $alertBody += "`n`n{0} error(s) this run - see the log." -f $err }
-        Send-LicenseAlert -AlertConfig $settings.alert -Subject $subject -Body $alertBody
+        # fromMailbox must be in the client's tenant — derive it from the tenant's default domain
+        $alertConfig = [pscustomobject]@{
+            method      = $settings.alert.method
+            target      = $settings.alert.target
+            fromMailbox = "netbit@$($tenant.defaultDomain)"
+        }
+        Send-LicenseAlert -AlertConfig $alertConfig -Subject $subject -Body $alertBody
     }
 
     Write-Log -Level INFO -Message 'Run complete.'

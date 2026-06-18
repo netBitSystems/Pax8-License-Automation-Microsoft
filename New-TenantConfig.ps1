@@ -422,14 +422,14 @@ $txtKey    = Add-TextBox $pg1inner 200 60
 $txtTid    = Add-TextBox $pg1inner 200 92
 $txtDomain = Add-TextBox $pg1inner 200 124
 
-# Auto-generate tenant key from display name
+# Auto-generate tenant key from display name; auto-fill Pax8 company name
 $txtName.Add_TextChanged({
     if ($txtKey.Tag -ne 'manual') {
         $safe = ($txtName.Text -replace '[^a-zA-Z0-9]', '').ToLower()
         if ($safe.Length -gt 20) { $safe = $safe.Substring(0, 20) }
-        $txtKey.Text = $safe
-        $txtKey.Tag = 'auto'
+        $txtKey.Text = $safe; $txtKey.Tag = 'auto'
     }
+    if ($txtPax8Name.Tag -ne 'manual') { $txtPax8Name.Text = $txtName.Text; $txtPax8Name.Tag = 'auto' }
 })
 $txtKey.Add_TextChanged({ if ($txtKey.Focused) { $txtKey.Tag = 'manual' } })
 
@@ -440,6 +440,16 @@ Add-Label  $pg1inner 'Pax8 Company Name'             0  224
 Add-Label  $pg1inner '  (used if ID is blank)'       190  228  200
 $txtPax8Id   = Add-TextBox $pg1inner 200 190
 $txtPax8Name = Add-TextBox $pg1inner 200 222
+
+# Auto-fill Microsoft contact email as netbit@domain when domain is typed
+$txtDomain.Add_TextChanged({
+    if ($txtMsEmail.Tag -ne 'manual') {
+        $d = $txtDomain.Text.Trim()
+        if ($d) { $txtMsEmail.Text = "netbit@$d"; $txtMsEmail.Tag = 'auto' }
+    }
+})
+$txtPax8Name.Add_TextChanged({ if ($txtPax8Name.Focused) { $txtPax8Name.Tag = 'manual' } })
+$txtMsEmail.Add_TextChanged({ if ($txtMsEmail.Focused) { $txtMsEmail.Tag = 'manual' } })
 
 $chkGreenfield = New-Object System.Windows.Forms.CheckBox
 $chkGreenfield.Text = 'Greenfield — new client with no existing Microsoft subscriptions (automation will order all configured licenses immediately)'
@@ -468,8 +478,16 @@ $txtMsFirst = Add-TextBox $pg1inner 200 482
 $txtMsLast  = Add-TextBox $pg1inner 200 514
 $txtMsEmail = Add-TextBox $pg1inner 200 546
 
+# Pre-fill known NetBit defaults — users only need to type name, tenant ID, and domain
+$txtMcaFirst.Text = 'Adam'
+$txtMcaLast.Text  = 'Burnaman'
+$txtMcaEmail.Text = 'services@netbitsystemsllc.com'
+$txtMcaDate.Text  = '2023-06-19'
+$txtMsFirst.Text  = 'Dylan'
+$txtMsLast.Text   = 'Rumsey'
+
 $lblReqNote = New-Object System.Windows.Forms.Label
-$lblReqNote.Text = '* Required'
+$lblReqNote.Text = '* Required   —   Pre-filled fields can be changed if needed for this client.'
 $lblReqNote.Location = New-Object System.Drawing.Point(0, 590)
 $lblReqNote.AutoSize = $true
 $lblReqNote.ForeColor = [System.Drawing.Color]::Gray

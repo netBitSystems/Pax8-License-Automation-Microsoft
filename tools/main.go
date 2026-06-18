@@ -209,17 +209,63 @@ func runSetup() {
 	// ── 3. Azure Automation ──
 	section("3 / 3", "Azure Automation")
 
-	fmt.Printf("\n  %sStep A — Create Automation account + import modules%s\n\n", cWhite, cReset)
+	fmt.Printf("\n  %sStep A — Create the Automation account%s\n\n", cWhite, cReset)
 	step("Go to:  " + cCyan + "https://portal.azure.com/#create/Microsoft.AutomationAccount" + cReset)
-	step("  Name: Pax8LicenseAutomation    PowerShell runtime: 7.2")
-	step("Once created: Shared Resources > Modules > Add from gallery (runtime 7.2):")
-	step("  Microsoft.Graph.Authentication")
-	step("  Microsoft.Graph.Identity.DirectoryManagement")
-	step("Wait until both show Status = Available.")
+	step("Fill in only these fields, leave everything else as default:")
+	step("  Account Name:   Pax8LicenseAutomation")
+	step("  Region:         Central US")
+	step("Advanced tab:    System assigned")
+	step("Networking tab:  Public access")
+	step("Click Review + Create, then Create. Click Go to resource when done.")
+	fmt.Println()
+	wait("Press Enter once the account is created and you are on the overview page")
+
+	fmt.Printf("\n  %sStep B — Import required modules%s\n\n", cWhite, cReset)
+	fmt.Printf("  %sDownloading module files...%s\n", cGray, cReset)
+	modDir := root
+	modules := []struct{ name, url string }{
+		{"Microsoft.Graph.Authentication", "https://www.powershellgallery.com/api/v2/package/Microsoft.Graph.Authentication"},
+		{"Microsoft.Graph.Identity.DirectoryManagement", "https://www.powershellgallery.com/api/v2/package/Microsoft.Graph.Identity.DirectoryManagement"},
+	}
+	modDownloaded := true
+	for _, m := range modules {
+		dst := filepath.Join(modDir, m.name+".zip")
+		if _, err := os.Stat(dst); err == nil {
+			fmt.Printf("  %s✓  %s already downloaded%s\n", cGray, m.name, cReset)
+			continue
+		}
+		resp, err := http.Get(m.url)
+		if err != nil || resp.StatusCode != 200 {
+			fail("Could not download " + m.name + " — check your internet connection.")
+			modDownloaded = false
+			continue
+		}
+		f, _ := os.Create(dst)
+		io.Copy(f, resp.Body)
+		f.Close()
+		resp.Body.Close()
+		ok(m.name + " downloaded")
+	}
+	if modDownloaded {
+		fmt.Println()
+		step("In the Automation account: switch to Old Experience (button at the top)")
+		step("Left sidebar > Shared Resources > Modules > + Add a module")
+		step("For EACH of the two files below:")
+		step("  1. Click 'Upload a file'")
+		step("  2. Browse to the file")
+		step("  3. Set Runtime version to 7.2")
+		step("  4. Click Import")
+		fmt.Println()
+		for _, m := range modules {
+			fmt.Printf("  %s%s%s\n", cCyan, filepath.Join(modDir, m.name+".zip"), cReset)
+		}
+		fmt.Println()
+		step("Wait on the Modules page until both show Status = Available (refresh every minute).")
+	}
 	fmt.Println()
 	wait("Press Enter once both modules show Available")
 
-	fmt.Printf("\n  %sStep B — Create Automation Variables%s\n", cWhite, cReset)
+	fmt.Printf("\n  %sStep C — Create Automation Variables%s\n", cWhite, cReset)
 	fmt.Printf("  %sShared Resources > Variables > Add a variable (Type = String)%s\n", cGray, cReset)
 	fmt.Printf("  %s9 variables total. Variables marked [ENC] must have Encrypted toggled ON.%s\n\n", cGray, cReset)
 
@@ -246,7 +292,7 @@ func runSetup() {
 	fmt.Println()
 	wait("Press Enter once all 9 variables are created")
 
-	fmt.Printf("\n  %sStep C — Create the runbook%s\n\n", cWhite, cReset)
+	fmt.Printf("\n  %sStep D — Create the runbook%s\n\n", cWhite, cReset)
 	step("Process Automation > Runbooks > Create a runbook")
 	step("  Name: Start-Pax8LicenseSync    Type: PowerShell    Runtime: 7.2")
 	step("Open this file in Notepad and paste its contents into the editor:")
@@ -255,7 +301,7 @@ func runSetup() {
 	fmt.Println()
 	wait("Press Enter once the runbook is published")
 
-	fmt.Printf("\n  %sStep D — Schedule daily runs%s\n\n", cWhite, cReset)
+	fmt.Printf("\n  %sStep E — Schedule daily runs%s\n\n", cWhite, cReset)
 	step("Schedules > Add a schedule")
 	step("  Name: DailyLicenseSync    Recurring: every 1 Day    No expiration")
 	step("Runbooks > Start-Pax8LicenseSync > Schedules > Add > link DailyLicenseSync")

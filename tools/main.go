@@ -300,11 +300,32 @@ func runSetup() {
 	wait("Press Enter once all 9 variables are created")
 
 	fmt.Printf("\n  %sStep D — Create the runbook%s\n\n", cWhite, cReset)
+	// Ensure the runbook script is available locally
+	runbookPath := filepath.Join(root, "Start-Pax8LicenseSync.ps1")
+	if _, err := os.Stat(runbookPath); err != nil {
+		fmt.Printf("  %sDownloading runbook script...%s\n", cGray, cReset)
+		rbResp, rbErr := http.Get("https://raw.githubusercontent.com/netBitSystems/Pax8-License-Automation-Microsoft/main/Start-Pax8LicenseSync.ps1")
+		if rbErr == nil && rbResp.StatusCode == 200 {
+			rbFile, _ := os.Create(runbookPath)
+			io.Copy(rbFile, rbResp.Body)
+			rbFile.Close()
+			rbResp.Body.Close()
+			ok("Runbook script downloaded")
+		} else {
+			fail("Could not download runbook script — check your internet connection.")
+		}
+	}
+	fmt.Println()
 	step("Process Automation > Runbooks > Create a runbook")
-	step("  Name: Start-Pax8LicenseSync    Type: PowerShell    Runtime: 7.2")
-	step("Open this file in Notepad and paste its contents into the editor:")
-	fmt.Printf("  %s%s%s\n", cCyan, filepath.Join(root, "Start-Pax8LicenseSync.ps1"), cReset)
-	step("Save, then Publish.")
+	step("  Name:         Start-Pax8LicenseSync")
+	step("  Runbook type: PowerShell")
+	step("  Runtime:      7.2")
+	step("Click Create. When the editor opens:")
+	step("  1. Open this file in Notepad (right-click > Open with > Notepad):")
+	fmt.Printf("     %s%s%s\n", cCyan, runbookPath, cReset)
+	step("  2. Select all (Ctrl+A), copy (Ctrl+C)")
+	step("  3. Click inside the Azure editor and paste (Ctrl+V)")
+	step("  4. Click Save, then Publish, then confirm")
 	fmt.Println()
 	wait("Press Enter once the runbook is published")
 

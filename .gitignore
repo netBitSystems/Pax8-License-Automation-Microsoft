@@ -7,3 +7,6 @@ logs/
 
 # Never commit the compiled binary
 pax8tools.exe
+
+# Downloaded Azure Automation module packages
+Microsoft.Graph.*.zip

@@ -329,15 +329,15 @@ func runSetup() {
 	fmt.Println()
 	wait("Press Enter once the runbook is published")
 
-	fmt.Printf("\n  %sStep E — Schedule daily runs%s\n\n", cWhite, cReset)
+	fmt.Printf("\n  %sStep E — Schedule hourly runs%s\n\n", cWhite, cReset)
 	step("On the runbook page, click Link to schedule > Schedule row > + Add a schedule")
 	fmt.Println()
 	step("Fill in the New Schedule form:")
-	step("  Name:        DailyLicenseSync")
-	step("  Starts:      set the time to 6:00 AM tomorrow (leave the date, change the time)")
+	step("  Name:        HourlyLicenseSync")
+	step("  Starts:      leave as-is")
 	step("  Time zone:   leave as-is")
 	step("  Recurrence:  select Recurring")
-	step("  Recur every: change Hour to Day, leave the number as 1")
+	step("  Recur every: leave as 1 Hour")
 	step("  Expiration:  No")
 	step("Click Create.")
 	fmt.Println()
@@ -513,11 +513,24 @@ func runAddClient() {
 	}
 
 	outPath := filepath.Join(root, "config", "tenants", tenantKey+".json")
+	os.MkdirAll(filepath.Dir(outPath), 0755)
 	data, _ := json.MarshalIndent(config, "", "  ")
 	os.WriteFile(outPath, data, 0644)
+	copyToClipboard(string(data))
 
-	fmt.Printf("\n  %sSaved to: %s%s%s\n", cGreen, cCyan, outPath, cReset)
-	fmt.Printf("  Next: run a dry-run test (%s[3]%s) then sync to GitHub (%s[5]%s).\n\n", cCyan, cReset, cCyan, cReset)
+	fmt.Printf("\n  %sSaved locally to: %s%s%s\n", cGreen, cCyan, outPath, cReset)
+	fmt.Printf("  %sThe tenant config JSON was also copied to your clipboard.%s\n\n", cGreen, cReset)
+	fmt.Println("  In this client's Azure Automation account:")
+	fmt.Println("    Shared Resources > Variables > + Add a variable")
+	fmt.Println()
+	fmt.Printf("  Name:      %sTenantConfig%s\n", cWhite, cReset)
+	fmt.Println("  Type:      String")
+	fmt.Println("  Value:     paste the JSON from your clipboard")
+	fmt.Println("  Encrypted: No")
+	fmt.Println()
+	fmt.Println("  If TenantConfig already exists, open it, click Edit, replace the Value, and Save.")
+	fmt.Println()
+	fmt.Printf("  Next: run Verify it's working (%s[3]%s) or manually start the Azure runbook.\n\n", cCyan, cReset)
 	wait("Press Enter")
 }
 
@@ -683,9 +696,17 @@ func saveCreds(c Credentials) {
 
 // ── Catalog ────────────────────────────────────────────────────────────────
 func loadCatalog() []CatalogEntry {
-	data, err := os.ReadFile(filepath.Join(root, "config", "sku-catalog.json"))
+	catalogPath := filepath.Join(root, "config", "sku-catalog.json")
+	data, err := os.ReadFile(catalogPath)
 	if err != nil {
-		return nil
+		os.MkdirAll(filepath.Dir(catalogPath), 0755)
+		resp, dlErr := http.Get("https://raw.githubusercontent.com/netBitSystems/Pax8-License-Automation-Microsoft/main/config/sku-catalog.json")
+		if dlErr != nil || resp.StatusCode != 200 {
+			return nil
+		}
+		defer resp.Body.Close()
+		data, _ = io.ReadAll(resp.Body)
+		os.WriteFile(catalogPath, data, 0644)
 	}
 	var cf CatalogFile
 	json.Unmarshal(data, &cf)
@@ -749,6 +770,20 @@ func askYN(prompt string) bool {
 func wait(prompt string) {
 	fmt.Println()
 	ask("  " + prompt)
+}
+
+func copyToClipboard(text string) {
+	cmd := exec.Command("clip")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return
+	}
+	if err := cmd.Start(); err != nil {
+		return
+	}
+	io.WriteString(stdin, text)
+	stdin.Close()
+	cmd.Wait()
 }
 
 func cls() {

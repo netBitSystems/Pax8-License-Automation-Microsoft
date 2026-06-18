@@ -33,22 +33,129 @@ Initialize-LogContext -Directory (Join-Path $env:TEMP 'Pax8LicenseWizard') -Tena
 function _Plain([System.Security.SecureString]$s) {
     if ($s) { [System.Net.NetworkCredential]::new('', $s).Password }
 }
-$credFile = Join-Path $scriptRoot 'config\credentials.local.xml'
-$local    = if (Test-Path $credFile) { Import-Clixml $credFile } else { $null }
 
-$pax8ClientId = $env:PAX8_CLIENT_ID
-$pax8Secret   = $env:PAX8_CLIENT_SECRET
-if (-not $pax8ClientId -and $local) { $pax8ClientId = $local.Pax8ClientId; $pax8Secret = _Plain $local.Pax8ClientSecret }
-
+# Try env vars first, then the encrypted local store (may fail if run as a different user)
+$pax8ClientId  = $env:PAX8_CLIENT_ID
+$pax8Secret    = $env:PAX8_CLIENT_SECRET
 $graphClientId = $env:GRAPH_CLIENT_ID
 $graphSecret   = $env:GRAPH_CLIENT_SECRET
-if (-not $graphClientId -and $local) { $graphClientId = $local.GraphClientId; $graphSecret = _Plain $local.GraphClientSecret }
 
 if (-not $pax8ClientId) {
-    [System.Windows.Forms.MessageBox]::Show(
-        "Pax8 credentials not found.`nRun Set-Credentials.ps1 first.",
-        "Missing Credentials", 'OK', 'Error') | Out-Null
-    exit 1
+    try {
+        $credFile = Join-Path $scriptRoot 'config\credentials.local.xml'
+        if (Test-Path $credFile) {
+            $local = Import-Clixml $credFile
+            $pax8ClientId  = $local.Pax8ClientId
+            $pax8Secret    = _Plain $local.Pax8ClientSecret
+            $graphClientId = $local.GraphClientId
+            $graphSecret   = _Plain $local.GraphClientSecret
+        }
+    } catch {
+        # DPAPI-encrypted file is not readable by this user account — will prompt below
+    }
+}
+
+# If credentials still missing, show a credential entry dialog
+if (-not $pax8ClientId) {
+    $cdlg = New-Object System.Windows.Forms.Form
+    $cdlg.Text = 'Pax8 License Automation - Enter API Credentials'
+    $cdlg.Size = New-Object System.Drawing.Size(520, 400)
+    $cdlg.StartPosition = 'CenterScreen'
+    $cdlg.FormBorderStyle = 'FixedDialog'
+    $cdlg.MaximizeBox = $false
+    $cdlg.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+
+    $cHdr = New-Object System.Windows.Forms.Panel
+    $cHdr.Dock = 'Top'; $cHdr.Height = 52
+    $cHdr.BackColor = [System.Drawing.Color]::FromArgb(0, 102, 180)
+    $cHdrLbl = New-Object System.Windows.Forms.Label
+    $cHdrLbl.Text = 'API Credentials'
+    $cHdrLbl.ForeColor = [System.Drawing.Color]::White
+    $cHdrLbl.Font = New-Object System.Drawing.Font('Segoe UI', 12, [System.Drawing.FontStyle]::Bold)
+    $cHdrLbl.Location = New-Object System.Drawing.Point(14, 14)
+    $cHdrLbl.AutoSize = $true
+    $cHdr.Controls.Add($cHdrLbl)
+    $cdlg.Controls.Add($cHdr)
+
+    $cBody = New-Object System.Windows.Forms.Panel
+    $cBody.Location = New-Object System.Drawing.Point(20, 62)
+    $cBody.Size = New-Object System.Drawing.Size(470, 270)
+    $cdlg.Controls.Add($cBody)
+
+    $cNote = New-Object System.Windows.Forms.Label
+    $cNote.Text = 'Enter your Pax8 API credentials. Graph credentials are optional and only needed to auto-load licenses for an existing client.'
+    $cNote.Location = New-Object System.Drawing.Point(0, 0)
+    $cNote.Size = New-Object System.Drawing.Size(470, 36)
+    $cNote.ForeColor = [System.Drawing.Color]::DimGray
+    $cBody.Controls.Add($cNote)
+
+    function cLbl($text, $y) {
+        $l = New-Object System.Windows.Forms.Label
+        $l.Text = $text; $l.Location = New-Object System.Drawing.Point(0, $y)
+        $l.Size = New-Object System.Drawing.Size(160, 20)
+        $cBody.Controls.Add($l)
+    }
+    function cTxt($y, [switch]$Password) {
+        $t = New-Object System.Windows.Forms.TextBox
+        $t.Location = New-Object System.Drawing.Point(165, ($y - 2))
+        $t.Size = New-Object System.Drawing.Size(300, 25)
+        if ($Password) { $t.UseSystemPasswordChar = $true }
+        $cBody.Controls.Add($t); return $t
+    }
+
+    cLbl 'Pax8 Client ID *'     48
+    cLbl 'Pax8 Client Secret *' 80
+    cLbl 'Graph Client ID'      122
+    cLbl 'Graph Client Secret'  154
+    $cPax8Id  = cTxt 46
+    $cPax8Sec = cTxt 78  -Password
+    $cGrphId  = cTxt 120
+    $cGrphSec = cTxt 152 -Password
+
+    $cSep = New-Object System.Windows.Forms.Label
+    $cSep.Location = New-Object System.Drawing.Point(0, 102); $cSep.Size = New-Object System.Drawing.Size(470, 1)
+    $cSep.BackColor = [System.Drawing.Color]::LightGray
+    $cBody.Controls.Add($cSep)
+
+    $cReq = New-Object System.Windows.Forms.Label
+    $cReq.Text = '* Required   |   Pax8: portal.pax8.com > Integrations > API Credentials'
+    $cReq.Location = New-Object System.Drawing.Point(0, 196)
+    $cReq.Size = New-Object System.Drawing.Size(470, 18)
+    $cReq.ForeColor = [System.Drawing.Color]::Gray
+    $cBody.Controls.Add($cReq)
+
+    $cOk = New-Object System.Windows.Forms.Button
+    $cOk.Text = 'Connect'; $cOk.Size = New-Object System.Drawing.Size(90, 30)
+    $cOk.Location = New-Object System.Drawing.Point(300, 340)
+    $cOk.BackColor = [System.Drawing.Color]::FromArgb(0, 102, 180)
+    $cOk.ForeColor = [System.Drawing.Color]::White
+    $cOk.FlatStyle = 'Flat'
+    $cOk.DialogResult = 'OK'
+    $cdlg.Controls.Add($cOk)
+
+    $cCancel = New-Object System.Windows.Forms.Button
+    $cCancel.Text = 'Cancel'; $cCancel.Size = New-Object System.Drawing.Size(90, 30)
+    $cCancel.Location = New-Object System.Drawing.Point(400, 340)
+    $cCancel.DialogResult = 'Cancel'
+    $cdlg.Controls.Add($cCancel)
+
+    $cdlg.AcceptButton = $cOk
+    $cdlg.CancelButton = $cCancel
+
+    $cOk.Add_Click({
+        if (-not $cPax8Id.Text.Trim() -or -not $cPax8Sec.Text.Trim()) {
+            [System.Windows.Forms.MessageBox]::Show('Pax8 Client ID and Secret are required.', 'Required', 'OK', 'Warning') | Out-Null
+            $cdlg.DialogResult = 'None'
+        }
+    })
+
+    if ($cdlg.ShowDialog() -ne 'OK') { exit 0 }
+
+    $pax8ClientId  = $cPax8Id.Text.Trim()
+    $pax8Secret    = $cPax8Sec.Text.Trim()
+    $graphClientId = $cGrphId.Text.Trim()
+    $graphSecret   = $cGrphSec.Text.Trim()
+    $cdlg.Dispose()
 }
 
 # ---------- Connect to Pax8 ----------

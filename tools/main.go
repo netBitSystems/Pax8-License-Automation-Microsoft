@@ -1,6 +1,6 @@
 // pax8tools - Pax8 License Automation CLI
 // Builds to a single standalone Windows executable with no runtime dependencies.
-// go build -o ../pax8tools.exe .
+// go build -C D:\Pax8LicenseAutomation\tools -o D:\Pax8LicenseAutomation\pax8tools.exe .
 package main
 
 import (
@@ -23,7 +23,7 @@ import (
 
 // ── ANSI colors ────────────────────────────────────────────────────────────
 const (
-	appVersion = "v1.2 - single-client deployment"
+	appVersion = "v1.3 - guided client setup"
 	cReset     = "\033[0m"
 	cBlue      = "\033[34m"
 	cCyan      = "\033[36m"
@@ -47,7 +47,6 @@ type Credentials struct {
 	Pax8ClientSecret  string `json:"pax8ClientSecret"`
 	GraphClientId     string `json:"graphClientId"`
 	GraphClientSecret string `json:"graphClientSecret"`
-	GitHubPat         string `json:"githubPat"`
 }
 
 type CatalogFile struct {
@@ -96,6 +95,7 @@ type TenantConfig struct {
 	Greenfield            bool          `json:"greenfield"`
 	Pax8CompanyId         string        `json:"pax8CompanyId"`
 	Pax8CompanyNameHint   string        `json:"pax8CompanyNameHint"`
+	AlertEmail            string        `json:"alertEmail"`
 	MicrosoftProvisioning Provisioning  `json:"microsoftProvisioning"`
 	SkuMap                []SkuMapEntry `json:"skuMap"`
 	IgnoreSkuPartNumbers  []string      `json:"ignoreSkuPartNumbers"`
@@ -118,36 +118,26 @@ func showMenu() {
 	bar("Pax8 License Automation", "")
 	fmt.Printf("  %s%s%s\n\n", cGray, appVersion, cReset)
 	fmt.Println()
-	fmt.Printf("  %s[1]%s  First-time setup\n", cCyan, cReset)
-	fmt.Printf("  %s[2]%s  Add a new client\n", cCyan, cReset)
-	fmt.Printf("  %s[3]%s  Verify it's working\n", cCyan, cReset)
-	fmt.Printf("  %s[4]%s  Exit\n", cCyan, cReset)
+	fmt.Printf("  %s[1]%s  Set up a client\n", cCyan, cReset)
+	fmt.Printf("  %s[2]%s  Exit\n", cCyan, cReset)
 	fmt.Println()
 	choice := ask("  Enter choice")
 	switch choice {
 	case "1":
-		runSetup()
+		runClientWizard()
 	case "2":
-		runAddClient()
-	case "3":
-		runPwsh("Test-Local.ps1", false)
-	case "4":
 		os.Exit(0)
 	}
 }
 
-// ── Setup wizard ──────────────────────────────────────────────────────────
-func runSetup() {
+// ── Client setup wizard ────────────────────────────────────────────────────
+func runClientWizard() {
 	cls()
-	bar("First-Time Setup", "Connects this tool to Pax8, Microsoft, and GitHub.")
-	fmt.Printf("\n  You need admin access to portal.pax8.com, portal.azure.com, and github.com.\n")
-	fmt.Printf("  Takes about 20 minutes. Safe to re-run — completed steps are skipped.\n\n")
-	wait("Press Enter to start")
+	bar("Client Setup", "Sets up Pax8 license management for one client, start to finish.")
 
+	// ── Step 1: Pax8 credentials ──────────────────────────────────────────
+	section("Step 1 of 5", "Pax8 API Credentials")
 	creds := loadCreds()
-
-	// ── 1. Pax8 ──
-	section("1 / 3", "Pax8 API Credential")
 	pax8Token := ""
 	if creds.Pax8ClientId != "" && creds.Pax8ClientSecret != "" {
 		tok, err := getPax8Token(creds.Pax8ClientId, creds.Pax8ClientSecret)
@@ -157,333 +147,193 @@ func runSetup() {
 		}
 	}
 	if pax8Token == "" {
-		step("Go to:  " + cCyan + "https://portal.pax8.com" + cReset)
-		step("Integrations > Overview > API keys generated > Add API Credential")
-		step("Enter a client name and click Add. Copy the Client ID and Client Secret.")
 		fmt.Println()
-		creds, pax8Token = promptForPax8Credentials(creds)
-	}
-
-	// ── 2. Entra ──
-	section("2 / 3", "Microsoft Entra App Registration")
-	guidRe := regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-	if creds.GraphClientId != "" && guidRe.MatchString(creds.GraphClientId) && len(creds.GraphClientSecret) > 10 {
-		ok("Graph credentials already on file — skipped")
-	} else {
-		step("Go to:  " + cCyan + "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/CreateApplicationBlade" + cReset)
-		fmt.Println()
-		step("  Name:           Pax8 License Automation")
-		step("  Account type:   Accounts in this organizational directory only (Single tenant)")
-		step("  Redirect URI:   leave blank  →  click Register")
-		fmt.Println()
-		step("API permissions > Add > Microsoft Graph > Application permissions:")
-		step("  Organization.Read.All   Directory.Read.All   Mail.Send")
-		step("Then click Grant admin consent.")
-		fmt.Println()
-		step("Certificates & secrets > New client secret > 24 months > Add")
-		step("Copy the VALUE column (NOT the Secret ID) — click the copy icon next to the value.")
-		fmt.Println()
-		step("Then click Overview in the left sidebar to get the Application (client) ID.")
-		fmt.Println()
-		for !(guidRe.MatchString(creds.GraphClientId) && len(creds.GraphClientSecret) > 10) {
-			creds.GraphClientId = ask("  Application (client) ID  (from the Overview page)")
-			creds.GraphClientSecret = ask("  Client Secret Value      (the VALUE column, not the Secret ID)")
-			if !(guidRe.MatchString(creds.GraphClientId) && len(creds.GraphClientSecret) > 10) {
-				fail("App ID must be a GUID and secret must be at least 10 characters.")
-			}
-		}
-		ok("Graph credentials saved")
-	}
-
-	saveCreds(creds)
-	ok("Credentials saved to " + credPath())
-
-	// ── 3. Azure Automation ──
-	section("3 / 3", "Azure Automation")
-
-	fmt.Printf("\n  %sStep A — Create the Automation account%s\n\n", cWhite, cReset)
-	step("Go to:  " + cCyan + "https://portal.azure.com/#create/Microsoft.AutomationAccount" + cReset)
-	step("Fill in only these fields — leave everything else as default:")
-	step("  Subscription:    select your default subscription")
-	step("  Resource Group:  select your default resource group")
-	step("  Account Name:    Pax8LicenseAutomation")
-	step("  Region:          Central US")
-	step("Advanced tab:     System assigned")
-	step("Networking tab:   Public access")
-	step("Click Review + Create, then Create. Click Go to resource when done.")
-	fmt.Println()
-	wait("Press Enter once the account is created and you are on the overview page")
-
-	fmt.Printf("\n  %sStep B — Import required modules%s\n\n", cWhite, cReset)
-	fmt.Printf("  %sDownloading module files...%s\n", cGray, cReset)
-	modDir := root
-	modules := []struct{ name, url string }{
-		{"Microsoft.Graph.Authentication", "https://www.powershellgallery.com/api/v2/package/Microsoft.Graph.Authentication"},
-		{"Microsoft.Graph.Identity.DirectoryManagement", "https://www.powershellgallery.com/api/v2/package/Microsoft.Graph.Identity.DirectoryManagement"},
-	}
-	modDownloaded := true
-	for _, m := range modules {
-		dst := filepath.Join(modDir, m.name+".zip")
-		if _, err := os.Stat(dst); err == nil {
-			fmt.Printf("  %s✓  %s already downloaded%s\n", cGray, m.name, cReset)
-			continue
-		}
-		resp, err := http.Get(m.url)
-		if err != nil || resp.StatusCode != 200 {
-			fail("Could not download " + m.name + " — check your internet connection.")
-			modDownloaded = false
-			continue
-		}
-		f, _ := os.Create(dst)
-		io.Copy(f, resp.Body)
-		f.Close()
-		resp.Body.Close()
-		ok(m.name + " downloaded")
-	}
-	if modDownloaded {
-		fmt.Println()
-		step("If you see 'Switch to Old Experience' at the top of the page, click it.")
-		step("You need to be in the old experience to access Modules.")
-		fmt.Println()
-		step("Left sidebar > Shared Resources > Modules > + Add a module")
-		step("For EACH of the two files below:")
-		step("  1. Click 'Upload a file'")
-		step("  2. Browse to the file")
-		step("  3. Set Runtime version to 7.2")
-		step("  4. Click Import")
-		fmt.Println()
-		for _, m := range modules {
-			fmt.Printf("  %s%s%s\n", cCyan, filepath.Join(modDir, m.name+".zip"), cReset)
-		}
-		fmt.Println()
-		step("Wait on the Modules page until both show Status = Available (refresh every minute).")
-	}
-	fmt.Println()
-	wait("Press Enter once both modules show Available")
-
-	fmt.Printf("\n  %sStep C — Create Automation Variables%s\n\n", cWhite, cReset)
-	step("Left sidebar > Shared Resources > Variables > + Add a variable")
-	step("For each variable below: paste the Name, paste the Value, set Encrypted, click Create.")
-	step("Type should always be String.")
-	fmt.Println()
-
-	vars := []struct {
-		name, value string
-		enc         bool
-	}{
-		{"GitHubOwnerRepo", "netBitSystems/Pax8-License-Automation-Microsoft", false},
-		{"GitHubBranch", "main", false},
-		{"Pax8ClientId", creds.Pax8ClientId, true},
-		{"Pax8ClientSecret", creds.Pax8ClientSecret, true},
-		{"GraphClientId", creds.GraphClientId, true},
-		{"GraphClientSecret", creds.GraphClientSecret, true},
-		{"RunMode", "Both", false},
-		{"RunExecute", "false", false},
-		{"RunMockExecute", "true", false},
-	}
-	for i, v := range vars {
-		encLabel := "No"
-		if v.enc {
-			encLabel = "YES"
-		}
-		fmt.Printf("  %s── Variable %d of %d %s\n", cBlue, i+1, len(vars), cReset)
-		fmt.Printf("  Name:      %s%s%s\n", cWhite, v.name, cReset)
-		fmt.Printf("  Value:     %s%s%s\n", cCyan, v.value, cReset)
-		fmt.Printf("  Encrypted: %s\n", encLabel)
-		fmt.Println()
-	}
-	wait("Press Enter once all 9 variables are created")
-
-	fmt.Printf("\n  %sStep D — Create the runbook%s\n\n", cWhite, cReset)
-	// Ensure the runbook script is available locally
-	runbookPath := filepath.Join(root, "Start-Pax8LicenseSync.ps1")
-	if _, err := os.Stat(runbookPath); err != nil {
-		fmt.Printf("  %sDownloading runbook script...%s\n", cGray, cReset)
-		rbResp, rbErr := http.Get("https://raw.githubusercontent.com/netBitSystems/Pax8-License-Automation-Microsoft/main/Start-Pax8LicenseSync.ps1")
-		if rbErr == nil && rbResp.StatusCode == 200 {
-			rbFile, _ := os.Create(runbookPath)
-			io.Copy(rbFile, rbResp.Body)
-			rbFile.Close()
-			rbResp.Body.Close()
-			ok("Runbook script downloaded")
-		} else {
-			fail("Could not download runbook script — check your internet connection.")
-		}
-	}
-	fmt.Println()
-	step("Process Automation > Runbooks > Create a runbook")
-	step("  Name:         Start-Pax8LicenseSync")
-	step("  Runbook type: PowerShell")
-	step("  Runtime:      7.2")
-	step("Click Create. When the editor opens:")
-	step("  1. Open this file in Notepad (right-click > Open with > Notepad):")
-	fmt.Printf("     %s%s%s\n", cCyan, runbookPath, cReset)
-	step("  2. Select all (Ctrl+A), copy (Ctrl+C)")
-	step("  3. Click inside the Azure editor and paste (Ctrl+V)")
-	step("  4. Click Save, then Publish, then confirm")
-	fmt.Println()
-	wait("Press Enter once the runbook is published")
-
-	fmt.Printf("\n  %sStep E — Schedule hourly runs%s\n\n", cWhite, cReset)
-	step("On the runbook page, click Link to schedule > Schedule row > + Add a schedule")
-	fmt.Println()
-	step("Fill in the New Schedule form:")
-	step("  Name:        HourlyLicenseSync")
-	step("  Starts:      leave as-is")
-	step("  Time zone:   leave as-is")
-	step("  Recurrence:  select Recurring")
-	step("  Recur every: leave as 1 Hour")
-	step("  Expiration:  No")
-	step("Click Create.")
-	fmt.Println()
-	step("The schedule will appear in the list. Click it to select it, then click OK.")
-	fmt.Println()
-	wait("Press Enter once the schedule is linked")
-
-	bar("Setup complete", "")
-	fmt.Println()
-	fmt.Printf("  Next:  add a client → %s[2]%s in the menu\n", cCyan, cReset)
-	fmt.Printf("         dry-run test → %s[3]%s in the menu\n", cCyan, cReset)
-	fmt.Printf("         mock test in Azure → Runbooks > Start-Pax8LicenseSync > Start\n")
-	fmt.Println()
-	if askYN("Add first client now?") {
-		runAddClient()
-	}
-}
-
-// ── Add client ─────────────────────────────────────────────────────────────
-func runAddClient() {
-	cls()
-	bar("Add New Client", "")
-
-	creds := loadCreds()
-	pax8Token := ""
-	if creds.Pax8ClientId != "" && creds.Pax8ClientSecret != "" {
-		tok, err := getPax8Token(creds.Pax8ClientId, creds.Pax8ClientSecret)
-		if err == nil {
-			pax8Token = tok
-		}
-	}
-	if pax8Token == "" {
-		fmt.Println()
-		step("Pax8 credentials are needed to search the live Pax8 product catalog.")
-		step("If you have not created them yet:")
-		step("  Pax8 portal > Integrations > Overview > API keys generated > Add API Credential")
+		step("You need a Pax8 API credential to search the live product catalog.")
+		step("How to create one:")
+		step("  1. Go to: " + cCyan + "https://portal.pax8.com" + cReset)
+		step("  2. Click your name in the top-right corner → Settings")
+		step("  3. Go to Integrations → API Credentials")
+		step("  4. Click Add API Credential, enter any name, click Add")
+		step("  5. Copy the Client ID and Client Secret shown immediately after creation")
 		fmt.Println()
 		creds, pax8Token = promptForPax8Credentials(creds)
 		saveCreds(creds)
 	}
 
-	fmt.Println()
-	displayName := ask("  Client company name")
-	tenantId := ask("  Microsoft Tenant ID")
-	domain := ask("  Default domain (e.g. acmecorp.com)")
-	pax8Company := ask("  Pax8 company name (as shown in Pax8)")
+	// ── Step 2: Graph credentials ─────────────────────────────────────────
+	section("Step 2 of 5", "Microsoft Entra App Registration")
+	guidRe := regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	if creds.GraphClientId != "" && guidRe.MatchString(creds.GraphClientId) && len(creds.GraphClientSecret) > 10 {
+		ok("Graph credentials already on file — skipped")
+	} else {
+		fmt.Println()
+		step("This app reads Microsoft 365 license data from the client's tenant.")
+		step("You need one app registration per client tenant. How to create it:")
+		fmt.Println()
+		step("  1. Sign in to the CLIENT'S Azure tenant, then go to:")
+		step("     " + cCyan + "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/CreateApplicationBlade" + cReset)
+		fmt.Println()
+		step("  2. Fill in:")
+		step("       Name:            Pax8 License Automation")
+		step("       Supported types: Accounts in this organizational directory only (Single tenant)")
+		step("       Redirect URI:    leave blank")
+		step("     Click Register")
+		fmt.Println()
+		step("  3. Go to API permissions → Add a permission → Microsoft Graph → Application permissions")
+		step("     Add ALL THREE of these:")
+		step("       Organization.Read.All")
+		step("       Directory.Read.All")
+		step("       Mail.Send")
+		step("     Then click Grant admin consent for [tenant name] → Yes")
+		fmt.Println()
+		step("  4. Go to Certificates & secrets → New client secret")
+		step("     Description: anything | Expires: 24 months → click Add")
+		fmt.Printf("     %s%s⚠  Copy the VALUE column immediately — it disappears after you navigate away%s\n", cBold, cYellow, cReset)
+		step("     (Do NOT copy the Secret ID — only the Value to the left of it)")
+		fmt.Println()
+		step("  5. Click Overview in the left sidebar")
+		step("     The Application (client) ID is the GUID shown near the top")
+		fmt.Println()
+		for !(guidRe.MatchString(creds.GraphClientId) && len(creds.GraphClientSecret) > 10) {
+			creds.GraphClientId = ask("  Application (client) ID  [app Overview page]")
+			creds.GraphClientSecret = ask("  Client Secret Value      [VALUE column, NOT the Secret ID]")
+			if !(guidRe.MatchString(creds.GraphClientId) && len(creds.GraphClientSecret) > 10) {
+				fail("App ID must be a GUID. Secret must be at least 10 characters.")
+			}
+		}
+		ok("Graph credentials saved")
+		saveCreds(creds)
+	}
 
-	// Build tenant key
+	// ── Step 3: Azure Automation infrastructure ───────────────────────────
+	section("Step 3 of 5", "Azure Automation Infrastructure")
+	if !askYN("Have you already set up the Azure Automation account and runbook for this tool?") {
+		runAzureSetup(creds)
+	} else {
+		ok("Azure infrastructure already in place — skipped")
+	}
+
+	// ── Step 4: Client details ────────────────────────────────────────────
+	section("Step 4 of 5", "Client Details")
+	fmt.Println()
+
+	step("Is this client brand new to Pax8 with no existing Microsoft subscriptions,")
+	step("or are they currently purchasing licenses directly from Microsoft?")
+	fmt.Println()
+	fmt.Printf("  %s[1]%s  New client — no existing Microsoft subscriptions (greenfield)\n", cCyan, cReset)
+	fmt.Printf("  %s[2]%s  Existing client — currently has Microsoft direct licenses to migrate\n", cCyan, cReset)
+	fmt.Println()
+	clientType := ""
+	for clientType != "1" && clientType != "2" {
+		clientType = ask("  Enter choice")
+	}
+	greenfield := clientType == "1"
+
+	fmt.Println()
+	step("Client company name:")
+	step("  The name you use internally to refer to this client")
+	displayName := ask("  Company name")
+
+	fmt.Println()
+	step("Microsoft Tenant ID:")
+	step("  Where to find: Azure portal → Entra ID → Overview → Basic Information → Tenant ID")
+	step("  Looks like: 00000000-0000-0000-0000-000000000000")
+	tenantId := ask("  Tenant ID")
+
+	fmt.Println()
+	step("Primary domain:")
+	step("  Where to find: Azure portal → Entra ID → Overview → Basic Information → Primary domain")
+	step("  Use the custom domain if they have one (e.g. contoso.com), otherwise the .onmicrosoft.com domain")
+	domain := ask("  Primary domain")
+
+	fmt.Println()
+	step("Pax8 company name:")
+	step("  Where to find: Pax8 portal → Companies tab → find the client → copy the name exactly as shown")
+	pax8Company := ask("  Pax8 company name")
+
+	fmt.Println()
+	step("Alert notification email:")
+	step("  Who receives license sync reports and error alerts for this client")
+	step("  (Alerts are sent via the Mail.Send mailbox you granted in Step 2 — usually your support inbox)")
+	alertEmail := ask("  Alert email")
+
 	tenantKey := regexp.MustCompile(`[^a-z0-9]`).ReplaceAllString(strings.ToLower(displayName), "")
 	if len(tenantKey) > 20 {
 		tenantKey = tenantKey[:20]
 	}
+	fmt.Printf("\n  %sTenant key: %s%s\n", cGray, tenantKey, cReset)
 
-	greenfield := askYN("Greenfield? (no existing Microsoft subscriptions)")
-
-	fmt.Printf("\n  %sTenant key: %s%s\n\n", cGray, tenantKey, cReset)
-
-	// License selection
-	bar("License Selection", "Type Y to include, Enter to skip.")
+	// ── Step 5: License selection ─────────────────────────────────────────
 	catalog := loadCatalog()
 	if len(catalog) == 0 {
-		fail("Could not load sku-catalog.json")
-		wait("Press Enter")
+		fail("Could not load sku-catalog.json. Check your internet connection.")
+		wait("Press Enter to return to menu")
 		return
 	}
 
-	selected := []CatalogEntry{}
-	lastCat := ""
-	for _, e := range catalog {
-		if e.Category != lastCat {
-			lastCat = e.Category
-			fmt.Printf("\n  %s[ %s ]%s\n", cYellow, e.Category, cReset)
+	var skuMap []SkuMapEntry
+	var migrationList []CatalogEntry
+
+	if greenfield {
+		section("Step 5 of 5", "License Selection")
+		fmt.Println()
+		step("Select the licenses this client will use. The automation maintains a buffer of spare")
+		step("seats and automatically tops up via Pax8 when assignments get close to the limit.")
+		fmt.Println()
+
+		selected := selectLicensesFromCatalog(catalog)
+		if len(selected) == 0 {
+			fail("No licenses selected. At least one license is required.")
+			wait("Press Enter to return to menu")
+			return
 		}
-		if askYN("    " + e.DisplayName) {
-			selected = append(selected, e)
+		fmt.Printf("\n  %s%d license(s) selected.%s\n", cGreen, len(selected), cReset)
+
+		skuMap = matchToPax8Products(selected, pax8Token)
+		if skuMap == nil {
+			return
+		}
+
+	} else {
+		section("Step 5 of 5", "Existing Licenses — Identify and Map to Pax8")
+		fmt.Println()
+		step("Select every license the client currently purchases directly through Microsoft.")
+		step("These will be moved to Pax8 management. Do NOT cancel the direct subscriptions")
+		step("yet — you will get cancellation instructions at the end.")
+		fmt.Println()
+
+		migrationList = selectLicensesFromCatalog(catalog)
+		if len(migrationList) == 0 {
+			fail("No licenses selected. At least one license is required.")
+			wait("Press Enter to return to menu")
+			return
+		}
+		fmt.Printf("\n  %s%d license(s) selected for migration.%s\n", cGreen, len(migrationList), cReset)
+		fmt.Println()
+
+		// Cancellation warning block
+		fmt.Printf("  %s%s┌─ IMPORTANT: Microsoft Direct Cancellation Required ──────────────%s\n", cBold, cYellow, cReset)
+		for _, e := range migrationList {
+			fmt.Printf("  %s│  • %s%s\n", cYellow, e.DisplayName, cReset)
+		}
+		fmt.Printf("  %s│%s\n", cYellow, cReset)
+		fmt.Printf("  %s│  After setup, once Pax8 has provisioned the replacement subscriptions,%s\n", cYellow, cReset)
+		fmt.Printf("  %s│  cancel these Microsoft direct subscriptions:%s\n", cYellow, cReset)
+		fmt.Printf("  %s│    Microsoft 365 admin center → Billing → Your products%s\n", cYellow, cReset)
+		fmt.Printf("  %s│    Select each subscription → Cancel subscription%s\n", cYellow, cReset)
+		fmt.Printf("  %s│%s\n", cYellow, cReset)
+		fmt.Printf("  %s│  DO NOT cancel until you can see the Pax8 licenses assigned in the tenant.%s\n", cYellow, cReset)
+		fmt.Printf("  %s└──────────────────────────────────────────────────────────────────%s\n", cYellow, cReset)
+		fmt.Println()
+		wait("Press Enter to continue to Pax8 product matching")
+
+		skuMap = matchToPax8Products(migrationList, pax8Token)
+		if skuMap == nil {
+			return
 		}
 	}
-	if len(selected) == 0 {
-		fail("No licenses selected.")
-		wait("Press Enter")
-		return
-	}
-	fmt.Printf("\n  %s%d license(s) selected.%s\n", cGreen, len(selected), cReset)
 
-	// Pax8 product matching
-	bar("Pax8 Product Matching", "Search the live Pax8 catalog for each license.")
-	fmt.Printf("  %sLoading Pax8 products...%s\n\n", cGray, cReset)
-
-	products, err := getAllPax8Products(pax8Token)
-	if err != nil {
-		fail("Could not load Pax8 products: " + err.Error())
-		wait("Press Enter")
-		return
-	}
-	fmt.Printf("  %s%d products loaded.%s\n\n", cGray, len(products), cReset)
-
-	skuMap := []SkuMapEntry{}
-	for _, e := range selected {
-		fmt.Printf("\n  %s── %s ──%s\n", cCyan, e.DisplayName, cReset)
-		var chosenProduct *Pax8Product
-		for chosenProduct == nil {
-			searchTerm := ask("  Search term (Enter = '" + e.DisplayName + "')")
-			if searchTerm == "" {
-				searchTerm = e.DisplayName
-			}
-			results := searchProducts(products, searchTerm)
-			if len(results) == 0 {
-				fmt.Printf("  %sNo results.%s Try a different term.\n", cRed, cReset)
-				continue
-			}
-			limit := 15
-			if len(results) < limit {
-				limit = len(results)
-			}
-			fmt.Println()
-			for i := 0; i < limit; i++ {
-				fmt.Printf("  [%d] %s\n", i+1, results[i].Name)
-			}
-			fmt.Printf("  [0] Search again\n\n")
-			pickStr := ask("  Select number")
-			n, parseErr := strconv.Atoi(pickStr)
-			if parseErr == nil && n >= 1 && n <= limit {
-				p := results[n-1]
-				chosenProduct = &p
-				fmt.Printf("  %sOK: %s%s\n", cGreen, chosenProduct.Name, cReset)
-			}
-		}
-
-		bufStr := ask(fmt.Sprintf("  Buffer seats (default %d)", e.DefaultBuffer))
-		maxStr := ask(fmt.Sprintf("  Max seats cap (default %d)", e.DefaultMaxSeats))
-		buf := e.DefaultBuffer
-		maxS := e.DefaultMaxSeats
-		if n, err := strconv.Atoi(bufStr); err == nil {
-			buf = n
-		}
-		if n, err := strconv.Atoi(maxStr); err == nil {
-			maxS = n
-		}
-
-		skuMap = append(skuMap, SkuMapEntry{
-			SkuPartNumber:       e.SkuPartNumber,
-			SkuId:               e.SkuId,
-			DisplayName:         e.DisplayName,
-			Pax8ProductId:       chosenProduct.Id,
-			Pax8ProductNameHint: chosenProduct.Name,
-			Buffer:              buf,
-			MaxSeats:            maxS,
-		})
-	}
-
-	// Build and write config
+	// ── Build and save TenantConfig ───────────────────────────────────────
 	config := TenantConfig{
 		TenantKey:           tenantKey,
 		DisplayName:         displayName,
@@ -492,6 +342,7 @@ func runAddClient() {
 		Greenfield:          greenfield,
 		Pax8CompanyId:       "",
 		Pax8CompanyNameHint: pax8Company,
+		AlertEmail:          alertEmail,
 		MicrosoftProvisioning: Provisioning{
 			Mca2020FirstName:     "Adam",
 			Mca2020LastName:      "Burnaman",
@@ -517,80 +368,283 @@ func runAddClient() {
 	os.WriteFile(outPath, data, 0644)
 	copyToClipboard(string(data))
 
-	fmt.Printf("\n  %sSaved locally to: %s%s%s\n", cGreen, cCyan, outPath, cReset)
-	fmt.Printf("  %sThe tenant config JSON was also copied to your clipboard.%s\n\n", cGreen, cReset)
-	fmt.Println("  In this client's Azure Automation account:")
-	fmt.Println("    Shared Resources > Variables > + Add a variable")
+	// ── Final instructions ────────────────────────────────────────────────
+	bar("Setup Complete", "")
+	fmt.Printf("  %s✓  Config saved: %s%s%s\n", cGreen, cCyan, outPath, cReset)
+	fmt.Printf("  %s✓  JSON copied to clipboard.%s\n\n", cGreen, cReset)
+
+	step("Last step — paste the TenantConfig into Azure Automation:")
 	fmt.Println()
-	fmt.Printf("  Name:      %sTenantConfig%s\n", cWhite, cReset)
-	fmt.Println("  Type:      String")
-	fmt.Println("  Value:     paste the JSON from your clipboard")
-	fmt.Println("  Encrypted: No")
+	step("1. Open the client's Azure Automation account:")
+	step("   Azure portal → Automation Accounts → Pax8LicenseAutomation")
+	step("2. Left sidebar → Shared Resources → Variables → + Add a variable")
 	fmt.Println()
-	fmt.Println("  If TenantConfig already exists, open it, click Edit, replace the Value, and Save.")
+	fmt.Printf("   Name:      %sTenantConfig%s\n", cWhite, cReset)
+	fmt.Println("   Type:      String")
+	fmt.Println("   Value:     paste from clipboard (Ctrl+V)")
+	fmt.Println("   Encrypted: No  →  click Create")
 	fmt.Println()
-	fmt.Printf("  Next: run Verify it's working (%s[3]%s) or manually start the Azure runbook.\n\n", cCyan, cReset)
-	wait("Press Enter")
+	step("   If TenantConfig already exists: click the variable name → Edit value → replace → Save")
+	fmt.Println()
+	step("3. To confirm it's working:")
+	step("   Process Automation → Runbooks → Start-Pax8LicenseSync → Start")
+	step("   After it finishes, click Output to see the full sync log.")
+	fmt.Printf("   Alerts go to %s%s%s when orders are placed or errors occur.\n", cCyan, alertEmail, cReset)
+	fmt.Println()
+
+	if !greenfield && len(migrationList) > 0 {
+		fmt.Printf("  %s%s⚠  Don't forget — cancel these Microsoft direct subscriptions once Pax8 is confirmed active:%s\n", cBold, cYellow, cReset)
+		for _, e := range migrationList {
+			fmt.Printf("  %s   • %s%s\n", cYellow, e.DisplayName, cReset)
+		}
+		fmt.Println()
+	}
+
+	wait("Press Enter to return to the main menu")
 }
 
-// ── Sync to GitHub ─────────────────────────────────────────────────────────
-func runSync() {
-	cls()
-	bar("Sync to GitHub", "")
-	gitPath := findGit()
-	if gitPath == "" {
-		fail("git not found. Install Git for Windows and try again.")
-		wait("Press Enter")
-		return
+// ── Azure Automation setup ─────────────────────────────────────────────────
+func runAzureSetup(creds Credentials) {
+	fmt.Println()
+
+	// Step A: Automation account
+	fmt.Printf("  %sStep A — Create the Azure Automation account%s\n\n", cWhite, cReset)
+	step("Go to: " + cCyan + "https://portal.azure.com/#create/Microsoft.AutomationAccount" + cReset)
+	step("Fill in ONLY these fields — leave everything else as the default:")
+	fmt.Println()
+	step("  Subscription:   Your subscription")
+	step("                  (Where to find: Azure portal → Subscriptions, or the top of any resource blade)")
+	step("  Resource Group: Your resource group, or create a new one named Pax8Automation")
+	step("                  (Where to find: Azure portal → Resource groups)")
+	step("  Account Name:   Pax8LicenseAutomation")
+	step("  Region:         Central US")
+	fmt.Println()
+	step("  Advanced tab:   System assigned")
+	step("  Networking tab: Public access")
+	fmt.Println()
+	step("Click Review + Create → Create. When deployment finishes, click Go to resource.")
+	fmt.Println()
+	wait("Press Enter once the account is open in the portal")
+
+	// Step B: Modules
+	fmt.Printf("\n  %sStep B — Import required PowerShell modules%s\n\n", cWhite, cReset)
+	fmt.Printf("  %sDownloading module files...%s\n", cGray, cReset)
+	modDir := root
+	modules := []struct{ name, url string }{
+		{"Microsoft.Graph.Authentication", "https://www.powershellgallery.com/api/v2/package/Microsoft.Graph.Authentication"},
+		{"Microsoft.Graph.Identity.DirectoryManagement", "https://www.powershellgallery.com/api/v2/package/Microsoft.Graph.Identity.DirectoryManagement"},
 	}
-	out, _ := runGit(gitPath, "status", "--porcelain")
-	if strings.TrimSpace(out) == "" {
-		ok("Nothing to sync — no changes since last push.")
-		wait("Press Enter")
-		return
+	allDownloaded := true
+	for _, m := range modules {
+		dst := filepath.Join(modDir, m.name+".zip")
+		if _, err := os.Stat(dst); err == nil {
+			fmt.Printf("  %s✓  %s already downloaded%s\n", cGray, m.name, cReset)
+			continue
+		}
+		resp, err := http.Get(m.url)
+		if err != nil || resp.StatusCode != 200 {
+			fail("Could not download " + m.name + " — check your internet connection.")
+			allDownloaded = false
+			continue
+		}
+		f, _ := os.Create(dst)
+		io.Copy(f, resp.Body)
+		f.Close()
+		resp.Body.Close()
+		ok(m.name + " downloaded")
 	}
-	fmt.Printf("\n  %sChanges:%s\n", cCyan, cReset)
-	statusOut, _ := runGit(gitPath, "status", "--short")
-	for _, line := range strings.Split(strings.TrimSpace(statusOut), "\n") {
-		fmt.Println("  " + line)
+	if allDownloaded {
+		fmt.Println()
+		step("If you see 'Switch to Old Experience' at the top of the page, click it.")
+		step("(Module upload only works in the old portal experience)")
+		fmt.Println()
+		step("Left sidebar → Shared Resources → Modules → + Add a module")
+		step("Do this ONCE for EACH file below:")
+		step("  1. Click Upload a file")
+		step("  2. Browse to the file shown below")
+		step("  3. Set Runtime version to 7.2")
+		step("  4. Click Import")
+		step("  5. Wait until Status shows Available before importing the next file")
+		fmt.Println()
+		for _, m := range modules {
+			fmt.Printf("  %s%s%s\n", cCyan, filepath.Join(modDir, m.name+".zip"), cReset)
+		}
+		fmt.Println()
+		step("Refresh the Modules list every 30 seconds until both show Status = Available.")
 	}
 	fmt.Println()
-	msg := ask("  Commit message (Enter = 'Update')")
-	if msg == "" {
-		msg = "Update"
+	wait("Press Enter once both modules show Status = Available")
+
+	// Step C: Variables
+	fmt.Printf("\n  %sStep C — Create Automation Variables%s\n\n", cWhite, cReset)
+	step("Left sidebar → Shared Resources → Variables → + Add a variable")
+	step("For each: Type = String. Set Encrypted exactly as shown. Click Create after each one.")
+	fmt.Println()
+
+	vars := []struct {
+		name, value string
+		enc         bool
+	}{
+		{"GitHubOwnerRepo", "netBitSystems/Pax8-License-Automation-Microsoft", false},
+		{"GitHubBranch", "main", false},
+		{"Pax8ClientId", creds.Pax8ClientId, true},
+		{"Pax8ClientSecret", creds.Pax8ClientSecret, true},
+		{"GraphClientId", creds.GraphClientId, true},
+		{"GraphClientSecret", creds.GraphClientSecret, true},
+		{"RunMode", "Both", false},
+		{"RunExecute", "false", false},
+		{"RunMockExecute", "true", false},
 	}
-	runGit(gitPath, "add", ".")
-	runGit(gitPath, "commit", "-m", msg)
-	output, err := runGit(gitPath, "push")
-	if err != nil {
-		fail("Push failed: " + output)
+	for i, v := range vars {
+		encLabel := "No"
+		if v.enc {
+			encLabel = cYellow + "YES — toggle Encrypted ON" + cReset
+		}
+		fmt.Printf("  %s── Variable %d of %d %s\n", cBlue, i+1, len(vars), cReset)
+		fmt.Printf("  Name:      %s%s%s\n", cWhite, v.name, cReset)
+		fmt.Printf("  Value:     %s%s%s\n", cCyan, v.value, cReset)
+		fmt.Printf("  Encrypted: %s\n\n", encLabel)
+	}
+	wait("Press Enter once all 9 variables are created")
+
+	// Step D: Runbook
+	fmt.Printf("\n  %sStep D — Create the runbook%s\n\n", cWhite, cReset)
+	runbookPath := filepath.Join(root, "Start-Pax8LicenseSync.ps1")
+	if _, err := os.Stat(runbookPath); err != nil {
+		fmt.Printf("  %sDownloading runbook script...%s\n", cGray, cReset)
+		rbResp, rbErr := http.Get("https://raw.githubusercontent.com/netBitSystems/Pax8-License-Automation-Microsoft/main/Start-Pax8LicenseSync.ps1")
+		if rbErr == nil && rbResp.StatusCode == 200 {
+			rbFile, _ := os.Create(runbookPath)
+			io.Copy(rbFile, rbResp.Body)
+			rbFile.Close()
+			rbResp.Body.Close()
+			ok("Runbook script downloaded")
+		} else {
+			fail("Could not download runbook script — check your internet connection.")
+		}
 	} else {
-		ok("Pushed to GitHub.")
+		ok("Runbook script already present")
 	}
 	fmt.Println()
-	wait("Press Enter")
+	step("Process Automation → Runbooks → Create a runbook")
+	step("  Name:         Start-Pax8LicenseSync")
+	step("  Runbook type: PowerShell")
+	step("  Runtime:      7.2")
+	step("Click Create. When the editor opens:")
+	fmt.Println()
+	step("  1. Open this file in Notepad (right-click → Open with → Notepad):")
+	fmt.Printf("     %s%s%s\n", cCyan, runbookPath, cReset)
+	step("  2. Select all (Ctrl+A), copy (Ctrl+C)")
+	step("  3. Click inside the Azure editor and paste (Ctrl+V)")
+	step("  4. Click Save → Publish → confirm")
+	fmt.Println()
+	wait("Press Enter once the runbook is published")
+
+	// Step E: Schedule
+	fmt.Printf("\n  %sStep E — Set up hourly schedule%s\n\n", cWhite, cReset)
+	step("On the runbook page, click Link to schedule → + Add a schedule")
+	fmt.Println()
+	step("Fill in the New Schedule form:")
+	step("  Name:        HourlyLicenseSync")
+	step("  Starts:      leave as-is")
+	step("  Time zone:   leave as-is")
+	step("  Recurrence:  select Recurring")
+	step("  Recur every: 1 Hour")
+	step("  Expiration:  No")
+	step("Click Create. Then click the schedule name to select it, then click OK.")
+	fmt.Println()
+	wait("Press Enter once the schedule is linked")
+
+	ok("Azure Automation infrastructure is ready")
+	fmt.Println()
 }
 
-// ── Run PowerShell script ──────────────────────────────────────────────────
-func runPwsh(script string, silent bool) {
-	scriptPath := filepath.Join(root, script)
-	cmd := exec.Command("pwsh.exe", "-ExecutionPolicy", "Bypass", "-NoProfile", "-File", scriptPath)
-
-	// Inject credentials as env vars so PowerShell can read them
-	creds := loadCreds()
-	cmd.Env = append(os.Environ(),
-		"PAX8_CLIENT_ID="+creds.Pax8ClientId,
-		"PAX8_CLIENT_SECRET="+creds.Pax8ClientSecret,
-		"GRAPH_CLIENT_ID="+creds.GraphClientId,
-		"GRAPH_CLIENT_SECRET="+creds.GraphClientSecret,
-	)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-	cmd.Run()
-	if !silent {
-		wait("Press Enter")
+// ── License selection from catalog ────────────────────────────────────────
+func selectLicensesFromCatalog(catalog []CatalogEntry) []CatalogEntry {
+	var selected []CatalogEntry
+	lastCat := ""
+	for _, e := range catalog {
+		if e.Category != lastCat {
+			lastCat = e.Category
+			fmt.Printf("\n  %s[ %s ]%s\n", cYellow, e.Category, cReset)
+		}
+		if askYN("    " + e.DisplayName) {
+			selected = append(selected, e)
+		}
 	}
+	return selected
+}
+
+// ── Pax8 product matching ──────────────────────────────────────────────────
+func matchToPax8Products(entries []CatalogEntry, pax8Token string) []SkuMapEntry {
+	bar("Pax8 Product Matching", "Match each license to the correct Pax8 product.")
+	fmt.Println()
+	step("Search the live Pax8 catalog and select the matching product for each license.")
+	step("Prefer 'New Commerce' products when available — they match the current Microsoft CSP model.")
+	fmt.Printf("  %sLoading Pax8 product catalog...%s\n\n", cGray, cReset)
+
+	products, err := getAllPax8Products(pax8Token)
+	if err != nil {
+		fail("Could not load Pax8 products: " + err.Error())
+		wait("Press Enter to return to menu")
+		return nil
+	}
+	fmt.Printf("  %s%d products loaded.%s\n\n", cGray, len(products), cReset)
+
+	var skuMap []SkuMapEntry
+	for _, e := range entries {
+		fmt.Printf("\n  %s── %s ──%s\n", cCyan, e.DisplayName, cReset)
+		var chosen *Pax8Product
+		for chosen == nil {
+			searchTerm := ask("  Search term (press Enter to use '" + e.DisplayName + "')")
+			if searchTerm == "" {
+				searchTerm = e.DisplayName
+			}
+			results := searchProducts(products, searchTerm)
+			if len(results) == 0 {
+				fmt.Printf("  %sNo results.%s Try a shorter or different term.\n", cRed, cReset)
+				continue
+			}
+			limit := 15
+			if len(results) < limit {
+				limit = len(results)
+			}
+			fmt.Println()
+			for i := 0; i < limit; i++ {
+				fmt.Printf("  [%d] %s\n", i+1, results[i].Name)
+			}
+			fmt.Printf("  [0] Search again\n\n")
+			pickStr := ask("  Select number")
+			n, parseErr := strconv.Atoi(pickStr)
+			if parseErr == nil && n >= 1 && n <= limit {
+				p := results[n-1]
+				chosen = &p
+				fmt.Printf("  %s✓ %s%s\n", cGreen, chosen.Name, cReset)
+			}
+		}
+
+		bufStr := ask(fmt.Sprintf("  Buffer seats — spare seats to keep available at all times (default %d)", e.DefaultBuffer))
+		maxStr := ask(fmt.Sprintf("  Max seats cap — never order beyond this total (default %d)", e.DefaultMaxSeats))
+		buf := e.DefaultBuffer
+		maxS := e.DefaultMaxSeats
+		if n, err := strconv.Atoi(bufStr); err == nil {
+			buf = n
+		}
+		if n, err := strconv.Atoi(maxStr); err == nil {
+			maxS = n
+		}
+
+		skuMap = append(skuMap, SkuMapEntry{
+			SkuPartNumber:       e.SkuPartNumber,
+			SkuId:               e.SkuId,
+			DisplayName:         e.DisplayName,
+			Pax8ProductId:       chosen.Id,
+			Pax8ProductNameHint: chosen.Name,
+			Buffer:              buf,
+			MaxSeats:            maxS,
+		})
+	}
+	return skuMap
 }
 
 // ── Pax8 API ───────────────────────────────────────────────────────────────
@@ -726,26 +780,6 @@ func loadCatalog() []CatalogEntry {
 	return cf.Licenses
 }
 
-// ── Git ────────────────────────────────────────────────────────────────────
-func findGit() string {
-	for _, p := range []string{`C:\Program Files\Git\bin\git.exe`, `C:\Program Files\Git\cmd\git.exe`} {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	if path, err := exec.LookPath("git"); err == nil {
-		return path
-	}
-	return ""
-}
-
-func runGit(gitPath string, args ...string) (string, error) {
-	cmd := exec.Command(gitPath, args...)
-	cmd.Dir = root
-	out, err := cmd.CombinedOutput()
-	return string(out), err
-}
-
 // ── UI helpers ─────────────────────────────────────────────────────────────
 func bar(title, sub string) {
 	fmt.Println()
@@ -760,7 +794,7 @@ func bar(title, sub string) {
 
 func section(num, title string) {
 	fmt.Println()
-	fmt.Printf("%s%s── %s ─── %s%s\n\n", cBlue, cBold, num, title, cReset)
+	fmt.Printf("%s%s── %s — %s%s\n\n", cBlue, cBold, num, title, cReset)
 }
 
 func step(text string) { fmt.Printf("  %s%s\n", text, cReset) }

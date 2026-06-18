@@ -7,6 +7,7 @@
   "greenfield": false,
   "pax8CompanyId": "",
   "pax8CompanyNameHint": "Client Display Name",
+  "alertEmail": "you@yourdomain.com",
 
   "microsoftProvisioning": {
     "mca2020FirstName": "Signatory First Name",

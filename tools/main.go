@@ -189,11 +189,13 @@ func runSetup() {
 		step("Then click Grant admin consent.")
 		fmt.Println()
 		step("Certificates & secrets > New client secret > 24 months > Add")
-		step("Copy the secret VALUE (not the ID) — shown only once.")
+		step("Copy the VALUE column (NOT the Secret ID) — click the copy icon next to the value.")
+		fmt.Println()
+		step("Then click Overview in the left sidebar to get the Application (client) ID.")
 		fmt.Println()
 		for !(guidRe.MatchString(creds.GraphClientId) && len(creds.GraphClientSecret) > 10) {
-			creds.GraphClientId = ask("  Application (client) ID")
-			creds.GraphClientSecret = ask("  Client Secret Value")
+			creds.GraphClientId = ask("  Application (client) ID  (from the Overview page)")
+			creds.GraphClientSecret = ask("  Client Secret Value      (the VALUE column, not the Secret ID)")
 			if !(guidRe.MatchString(creds.GraphClientId) && len(creds.GraphClientSecret) > 10) {
 				fail("App ID must be a GUID and secret must be at least 10 characters.")
 			}

@@ -211,11 +211,13 @@ func runSetup() {
 
 	fmt.Printf("\n  %sStep A — Create the Automation account%s\n\n", cWhite, cReset)
 	step("Go to:  " + cCyan + "https://portal.azure.com/#create/Microsoft.AutomationAccount" + cReset)
-	step("Fill in only these fields, leave everything else as default:")
-	step("  Account Name:   Pax8LicenseAutomation")
-	step("  Region:         Central US")
-	step("Advanced tab:    System assigned")
-	step("Networking tab:  Public access")
+	step("Fill in only these fields — leave everything else as default:")
+	step("  Subscription:    select your default subscription")
+	step("  Resource Group:  select your default resource group")
+	step("  Account Name:    Pax8LicenseAutomation")
+	step("  Region:          Central US")
+	step("Advanced tab:     System assigned")
+	step("Networking tab:   Public access")
 	step("Click Review + Create, then Create. Click Go to resource when done.")
 	fmt.Println()
 	wait("Press Enter once the account is created and you are on the overview page")
@@ -248,7 +250,9 @@ func runSetup() {
 	}
 	if modDownloaded {
 		fmt.Println()
-		step("In the Automation account: switch to Old Experience (button at the top)")
+		step("If you see 'Switch to Old Experience' at the top of the page, click it.")
+		step("You need to be in the old experience to access Modules.")
+		fmt.Println()
 		step("Left sidebar > Shared Resources > Modules > + Add a module")
 		step("For EACH of the two files below:")
 		step("  1. Click 'Upload a file'")
@@ -265,9 +269,11 @@ func runSetup() {
 	fmt.Println()
 	wait("Press Enter once both modules show Available")
 
-	fmt.Printf("\n  %sStep C — Create Automation Variables%s\n", cWhite, cReset)
-	fmt.Printf("  %sShared Resources > Variables > Add a variable (Type = String)%s\n", cGray, cReset)
-	fmt.Printf("  %s9 variables total. Variables marked [ENC] must have Encrypted toggled ON.%s\n\n", cGray, cReset)
+	fmt.Printf("\n  %sStep C — Create Automation Variables%s\n\n", cWhite, cReset)
+	step("Left sidebar > Shared Resources > Variables > + Add a variable")
+	step("For each variable below: paste the Name, paste the Value, set Encrypted, click Create.")
+	step("Type should always be String.")
+	fmt.Println()
 
 	vars := []struct{ name, value string; enc bool }{
 		{"GitHubOwnerRepo", "netBitSystems/Pax8-License-Automation-Microsoft", false},
@@ -280,16 +286,17 @@ func runSetup() {
 		{"RunExecute", "false", false},
 		{"RunMockExecute", "true", false},
 	}
-	for _, v := range vars {
-		tag := "     "
-		col := cGray
+	for i, v := range vars {
+		encLabel := "No"
 		if v.enc {
-			tag = "[ENC]"
-			col = cYellow
+			encLabel = "YES"
 		}
-		fmt.Printf("  %s%s  %-24s %s%s\n", col, tag, v.name, v.value, cReset)
+		fmt.Printf("  %s── Variable %d of %d %s\n", cBlue, i+1, len(vars), cReset)
+		fmt.Printf("  Name:      %s%s%s\n", cWhite, v.name, cReset)
+		fmt.Printf("  Value:     %s%s%s\n", cCyan, v.value, cReset)
+		fmt.Printf("  Encrypted: %s\n", encLabel)
+		fmt.Println()
 	}
-	fmt.Println()
 	wait("Press Enter once all 9 variables are created")
 
 	fmt.Printf("\n  %sStep D — Create the runbook%s\n\n", cWhite, cReset)

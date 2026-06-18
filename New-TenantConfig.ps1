@@ -302,7 +302,7 @@ function Show-ProductSearchDialog {
 # =====================================================================
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Pax8 License Automation — New Client Setup'
-$form.Size = New-Object System.Drawing.Size(860, 720)
+$form.Size = New-Object System.Drawing.Size(860, 780)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
@@ -485,6 +485,9 @@ $txtMcaEmail.Text = 'services@netbitsystemsllc.com'
 $txtMcaDate.Text  = '2023-06-19'
 $txtMsFirst.Text  = 'Dylan'
 $txtMsLast.Text   = 'Rumsey'
+
+# Reset scroll to top after pre-fills (setting text can shift AutoScroll position)
+$pg1scroll.AutoScrollPosition = [System.Drawing.Point]::new(0, 0)
 
 $lblReqNote = New-Object System.Windows.Forms.Label
 $lblReqNote.Text = '* Required   —   Pre-filled fields can be changed if needed for this client.'

@@ -163,17 +163,7 @@ foreach ($tf in $tenantFiles) {
         $subject = 'Pax8 License Sync [{0}] {1} - {2} action(s), {3} error(s)' -f $runType, $tenant.displayName, $actionable.Count, $err
         $alertBody = "Tenant: {0}`nMode: {1}`n`n{2}" -f $tenant.displayName, $runType, ($lines -join "`n")
         if ($err) { $alertBody += "`n`n{0} error(s) this run - see the log." -f $err }
-        # Per-tenant alertEmail overrides the global alert.target in settings.json
-        $alertConfig = $settings.alert
-        if ($tenant.alertEmail) {
-            $alertConfig = [pscustomobject]@{
-                method      = $settings.alert.method
-                target      = $tenant.alertEmail
-                fromMailbox = $settings.alert.fromMailbox
-            }
-            Write-Log -Level INFO -Message ("Alert will go to tenant-specific address: {0}" -f $tenant.alertEmail)
-        }
-        Send-LicenseAlert -AlertConfig $alertConfig -Subject $subject -Body $alertBody
+        Send-LicenseAlert -AlertConfig $settings.alert -Subject $subject -Body $alertBody
     }
 
     Write-Log -Level INFO -Message 'Run complete.'

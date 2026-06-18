@@ -95,7 +95,6 @@ type TenantConfig struct {
 	Greenfield            bool          `json:"greenfield"`
 	Pax8CompanyId         string        `json:"pax8CompanyId"`
 	Pax8CompanyNameHint   string        `json:"pax8CompanyNameHint"`
-	AlertEmail            string        `json:"alertEmail"`
 	MicrosoftProvisioning Provisioning  `json:"microsoftProvisioning"`
 	SkuMap                []SkuMapEntry `json:"skuMap"`
 	IgnoreSkuPartNumbers  []string      `json:"ignoreSkuPartNumbers"`
@@ -251,12 +250,6 @@ func runClientWizard() {
 	step("  Where to find: Pax8 portal → Companies tab → find the client → copy the name exactly as shown")
 	pax8Company := ask("  Pax8 company name")
 
-	fmt.Println()
-	step("Alert notification email:")
-	step("  Who receives license sync reports and error alerts for this client")
-	step("  (Alerts are sent via the Mail.Send mailbox you granted in Step 2 — usually your support inbox)")
-	alertEmail := ask("  Alert email")
-
 	tenantKey := regexp.MustCompile(`[^a-z0-9]`).ReplaceAllString(strings.ToLower(displayName), "")
 	if len(tenantKey) > 20 {
 		tenantKey = tenantKey[:20]
@@ -342,7 +335,6 @@ func runClientWizard() {
 		Greenfield:          greenfield,
 		Pax8CompanyId:       "",
 		Pax8CompanyNameHint: pax8Company,
-		AlertEmail:          alertEmail,
 		MicrosoftProvisioning: Provisioning{
 			Mca2020FirstName:     "Adam",
 			Mca2020LastName:      "Burnaman",
@@ -389,7 +381,7 @@ func runClientWizard() {
 	step("3. To confirm it's working:")
 	step("   Process Automation → Runbooks → Start-Pax8LicenseSync → Start")
 	step("   After it finishes, click Output to see the full sync log.")
-	fmt.Printf("   Alerts go to %s%s%s when orders are placed or errors occur.\n", cCyan, alertEmail, cReset)
+	step("   Alert emails go to services@netbitsystemsllc.com on orders and errors.")
 	fmt.Println()
 
 	if !greenfield && len(migrationList) > 0 {

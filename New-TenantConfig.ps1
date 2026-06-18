@@ -449,7 +449,6 @@ $txtDomain.Add_TextChanged({
     }
 })
 $txtPax8Name.Add_TextChanged({ if ($txtPax8Name.Focused) { $txtPax8Name.Tag = 'manual' } })
-$txtMsEmail.Add_TextChanged({ if ($txtMsEmail.Focused) { $txtMsEmail.Tag = 'manual' } })
 
 $chkGreenfield = New-Object System.Windows.Forms.CheckBox
 $chkGreenfield.Text = 'Greenfield — new client with no existing Microsoft subscriptions (automation will order all configured licenses immediately)'
@@ -477,6 +476,7 @@ Add-Label  $pg1inner 'Email *'                   0  548
 $txtMsFirst = Add-TextBox $pg1inner 200 482
 $txtMsLast  = Add-TextBox $pg1inner 200 514
 $txtMsEmail = Add-TextBox $pg1inner 200 546
+$txtMsEmail.Add_TextChanged({ if ($txtMsEmail.Focused) { $txtMsEmail.Tag = 'manual' } })
 
 # Pre-fill known NetBit defaults — users only need to type name, tenant ID, and domain
 $txtMcaFirst.Text = 'Adam'

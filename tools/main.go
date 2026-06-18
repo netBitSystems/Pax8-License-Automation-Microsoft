@@ -156,8 +156,8 @@ func runSetup() {
 	}
 	if pax8Token == "" {
 		step("Go to:  " + cCyan + "https://portal.pax8.com" + cReset)
-		step("Your name (top right) > Settings > Integrations > API Credentials > Create API Credential")
-		step("Copy the Client ID and Client Secret.")
+		step("Integrations > Overview > API keys generated > Add API Credential")
+		step("Enter a client name and click Add. Copy the Client ID and Client Secret.")
 		fmt.Println()
 		for pax8Token == "" {
 			creds.Pax8ClientId = ask("  Client ID")

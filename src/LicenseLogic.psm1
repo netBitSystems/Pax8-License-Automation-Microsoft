@@ -63,10 +63,10 @@ function New-LicensePlan {
                 $reason = "Pax8 qty $pax8Qty below desired $desired (assigned $assigned + buffer $buffer)"
             } elseif ($renewSoon) {
                 $action = 'transition'
-                $reason = "Direct renews $($renewDate.ToString('yyyy-MM-dd')); order $desired on Pax8"
+                $reason = "Renewal date $($renewDate.ToString('yyyy-MM-dd')); order $desired seats on Pax8"
             } else {
                 $action = 'wait'
-                $reason = "Not on Pax8 yet; direct renewal not within $leadDays days"
+                $reason = "No active Pax8 subscription; renewal not within $leadDays days"
             }
             if (($pax8Qty + $delta) -ge $maxSeats) { $reason += " (capped at maxSeats $maxSeats)" }
         }

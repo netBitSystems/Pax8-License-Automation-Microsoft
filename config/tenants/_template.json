@@ -1,0 +1,57 @@
+{
+  "tenantKey": "clientshortname",
+  "displayName": "Client Display Name",
+  "msTenantId": "00000000-0000-0000-0000-000000000000",
+  "defaultDomain": "client.com",
+
+  "pax8CompanyId": "",
+  "pax8CompanyNameHint": "Client Display Name",
+
+  "microsoftProvisioning": {
+    "mca2020FirstName": "Signatory First Name",
+    "mca2020LastName": "Signatory Last Name",
+    "mca2020Email": "signatory@email.com",
+    "mca2020EffectiveDate": "YYYY-MM-DD",
+    "msftContactFirstName": "Microsoft Contact First Name",
+    "msftContactLastName": "Microsoft Contact Last Name",
+    "msftContactEmail": "contact@clientdomain.com"
+  },
+
+  "skuMap": [
+    {
+      "skuPartNumber": "O365_BUSINESS_PREMIUM",
+      "skuId": "f245ecc8-75af-4f8e-b61f-27d8114de5f3",
+      "pax8ProductNameHint": "Microsoft 365 Business Standard",
+      "buffer": 5,
+      "maxSeats": 500
+    },
+    {
+      "skuPartNumber": "O365_BUSINESS_ESSENTIALS",
+      "skuId": "3b555118-da6a-4418-894f-7df1e2096870",
+      "pax8ProductNameHint": "Microsoft 365 Business Basic",
+      "buffer": 5,
+      "maxSeats": 500
+    },
+    {
+      "skuPartNumber": "EXCHANGESTANDARD",
+      "skuId": "4b9405b0-7788-4568-add1-99614e613b69",
+      "pax8ProductNameHint": "Exchange Online (Plan 1)",
+      "buffer": 5,
+      "maxSeats": 500
+    }
+  ],
+
+  "ignoreSkuPartNumbers": [
+    "DYN365_AI_SERVICE_INSIGHTS",
+    "FLOW_FREE",
+    "POWER_BI_STANDARD",
+    "CCIBOTS_PRIVPREV_VIRAL",
+    "POWERAPPS_DEV",
+    "POWERAPPS_VIRAL",
+    "WINDOWS_STORE",
+    "TEAMS_EXPLORATORY",
+    "Microsoft_Teams_Rooms_Basic",
+    "Microsoft_Teams_Audio_Conferencing_select_dial_out",
+    "Teams_Premium_(for_Departments)"
+  ]
+}

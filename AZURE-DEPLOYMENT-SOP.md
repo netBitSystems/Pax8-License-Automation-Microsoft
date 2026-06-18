@@ -45,8 +45,8 @@ to the repo.
 
 1. Go to https://portal.azure.com and sign in.
 2. In the top search bar, type `Automation` and click **Automation Accounts**.
-3. Find the Automation account in subscription `81959d5a-4931-4c77-b612-d30c1d9181eb` and click it.
-   (If you need to filter, set the subscription dropdown at the top of the portal to that subscription ID.)
+3. Find the Automation account used for this tool and click it.
+   (If you do not see it, use the subscription filter at the top of the portal to select the correct subscription.)
 
 All remaining steps happen inside this Automation account. Keep this page open.
 
@@ -189,16 +189,30 @@ The runbook will email what it would buy without buying it. To approve, flip it 
 Because Azure downloads the latest code from GitHub on every run, updating the automation requires
 no portal work at all. The technical person:
 
-1. Makes changes to the project files on `D:\Pax8LicenseAutomation`.
-2. Opens Warp and runs: `pwsh D:\Pax8LicenseAutomation\Test-Local.ps1` to verify the change.
+1. Makes changes to the project files on the local machine.
+2. Runs `Test-Local.ps1` to verify the change locally.
 3. Commits and pushes to GitHub.
 
 Azure will use the new code on the next scheduled run automatically.
 
 Specific update scenarios:
-- **Change a buffer or seat limit**: edit `config\tenants\riceland.json`, commit, push.
-- **Add a new managed tenant**: add a new file to `config\tenants\`, commit, push.
+- **Change a buffer or seat limit**: edit the relevant file in `config\tenants\`, commit, push.
 - **Rotate a credential**: update the matching Automation Variable in the portal (no code change).
 - **Roll back a bad change**: revert the last commit and push. Azure uses the previous version immediately.
 - **See what happened on a run**: Automation account > Runbooks > `Start-Pax8LicenseSync` > **Jobs**.
   Click any job to see its Output and All Logs. A summary email is also sent after every run.
+
+---
+
+## Adding a new client
+
+The initial setup above is done once. Adding each new client requires no portal work.
+
+1. Copy `config\tenants\_template.json` to a new file named after the client, e.g. `contoso.json`.
+2. Fill in the client's details: `tenantKey`, `displayName`, `msTenantId`, `defaultDomain`,
+   `pax8CompanyId` (or `pax8CompanyNameHint`), the `microsoftProvisioning` block, and the `skuMap`.
+   Refer to an existing tenant file and the `_template.json` for field descriptions.
+3. Run `Test-Local.ps1` to confirm the plan looks right for the new client.
+4. Commit and push to GitHub.
+
+The next scheduled Azure run will include the new client automatically.

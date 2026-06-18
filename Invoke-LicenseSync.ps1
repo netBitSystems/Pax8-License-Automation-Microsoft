@@ -53,7 +53,9 @@ if (-not $graphClientId -and $inAzure) { $graphClientId = Get-AutomationVariable
 
 foreach ($tf in $tenantFiles) {
     $tenant = Get-Content $tf -Raw | ConvertFrom-Json
-    Initialize-LogContext -Directory $settings.logging.directory -TenantKey $tenant.tenantKey | Out-Null
+    $logDir = $settings.logging.directory
+    if ($logDir -and -not [System.IO.Path]::IsPathRooted($logDir)) { $logDir = Join-Path $PSScriptRoot $logDir }
+    Initialize-LogContext -Directory $logDir -TenantKey $tenant.tenantKey | Out-Null
     Write-Log -Level INFO -Message ("=== {0} | mode {1} | dryRun {2} ===" -f $tenant.displayName, $Mode, $dryRun)
 
     $tid = $tenant.msTenantId

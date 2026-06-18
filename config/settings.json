@@ -24,7 +24,7 @@
     "certificateThumbprint": ""
   },
   "logging": {
-    "directory": "D:\\Pax8LicenseAutomation\\logs",
+    "directory": "logs",
     "retainDays": 90
   },
   "alert": {

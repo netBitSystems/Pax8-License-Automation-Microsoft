@@ -1,15 +1,15 @@
 # Pax8 License Automation
 
-Reusable, multi-tenant automation that keeps Microsoft 365 license seats available through Pax8 and
-moves direct-billed subscriptions onto Pax8 as they renew. The Microsoft side is read-only. Every
-seat change is a write to Pax8 only. License assignment to users stays manual in the admin center.
+Reusable, multi-tenant automation that manages Microsoft 365 licensing through Pax8. One deployment
+covers any number of clients. The Microsoft side is read-only. Every seat change is a write to Pax8
+only. License assignment to users stays manual in the admin center.
 
 ## What it does
 1. **Overhead report**: per SKU, seats purchased vs assigned vs idle, plus a renewal schedule.
 2. **Dynamic top-up**: keeps a configured spare-seat buffer per SKU by raising the Pax8 quantity when
    technicians assign licenses the normal way. No group-based licensing.
-3. **Renewal-driven transition**: as each direct subscription nears renewal, orders a right-sized Pax8
-   equivalent so you can let the direct one lapse. Same Microsoft SkuId, so no user reassignment.
+3. **Renewal-driven ordering**: when a SKU is not yet on Pax8 and its renewal window opens, orders the
+   right-sized Pax8 subscription automatically. Same Microsoft SKU ID, so no user reassignment needed.
 
 ## Safety model (graduated)
 The tooling is designed so you cannot accidentally spend:
@@ -23,30 +23,33 @@ Microsoft NCE annual terms only allow reductions at renewal.
 
 ## Layout
 ```
-D:\Pax8LicenseAutomation
+<project root>
   README.md
   config\
     settings.json            Global defaults, guardrails, Pax8 + Graph + logging settings
     tenants\
-      riceland.json          One file per tenant (this is all you add for a new tenant)
+      _template.json         Blank template - copy this to add a new client
+      <clientname>.json      One file per client (this is all you add for a new client)
   src\
     Pax8.psm1                Pax8 API: token, companies, products, subscriptions, orders
-    Graph.psm1               Microsoft Graph read-only (managed identity or device-code)
-    LicenseLogic.psm1        Top-up and transition decision logic + guardrails
+    Graph.psm1               Microsoft Graph read-only (managed identity or app secret)
+    LicenseLogic.psm1        Top-up and ordering decision logic + guardrails
     Logging.psm1             Structured logging used by everything
   Invoke-LicenseSync.ps1     Entry point (runbook and local). Dry-run by default.
-  Test-Local.ps1             Local test wrapper (device-code sign-in, dry-run, mock orders)
+  Test-Local.ps1             Local test wrapper (dry-run, mock orders)
   logs\                      Per-run transcripts and structured action logs
 ```
 
-## Adding a new tenant
-Copy `config\tenants\riceland.json` to a new file and set:
+## Adding a new client
+Copy `config\tenants\_template.json` to a new file named after the client (e.g. `contoso.json`) and fill in:
+- `tenantKey` (short ID, no spaces, matches the filename without .json)
 - `displayName`, `msTenantId`, `defaultDomain`
 - `pax8CompanyId` (or leave blank and set `pax8CompanyNameHint`; the tool resolves the ID from Pax8)
-- `skuMap`: one entry per paid SKU with its Microsoft `skuId`, a Pax8 product name hint, a `buffer`,
-  and a `maxSeats` cap
+- `microsoftProvisioning`: MCA signatory and Microsoft contact for that client
+- `skuMap`: one entry per paid SKU with its Microsoft `skuPartNumber` and `skuId`, a Pax8 product name
+  hint, a `buffer` (spare seats to keep available), and a `maxSeats` cap
 - `ignoreSkuPartNumbers`: free/viral/trial SKUs to skip
-No code changes are needed. The same runbook iterates every tenant file.
+No code changes. The same runbook iterates every file in the tenants folder.
 
 ## Prerequisites
 - Pax8 API credentials: Pax8 portal > Integrations > API credentials > Create API credential
@@ -80,6 +83,6 @@ To update or rotate them (the steps for when you have forgotten all of this):
 If a run logs `Graph auth failed` or `Pax8 auth failed`, a secret expired. Do steps 1 to 3.
 
 ## Manual step (by design)
-Turning off auto-renew on the legacy direct Microsoft subscriptions is done by an admin in
-M365 admin center > Billing > Your products. The tool flags which ones are ready but does not cancel
-direct subscriptions itself.
+For SKUs being moved onto Pax8 for the first time, turning off auto-renew on the existing Microsoft
+subscription is done by an admin in M365 admin center > Billing > Your products. The tool flags which
+subscriptions are in the renewal window but does not cancel or modify any Microsoft subscriptions itself.

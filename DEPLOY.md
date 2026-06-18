@@ -26,21 +26,19 @@ Runs the scripts as-is on an always-on Windows machine using the encrypted crede
    password, or set `PAX8_*` and `GRAPH_*` values as machine environment variables for that account.
 
 ## Option B (scalable): Azure Automation
-Serverless and best for many tenants. Requires repackaging because Automation has no local file system.
-1. Create an Automation account on the PowerShell 7.2 runtime.
-2. Import the Graph submodules as Automation modules: `Microsoft.Graph.Authentication` and
-   `Microsoft.Graph.Identity.DirectoryManagement`.
-3. Package `src\*.psm1` as one module asset (zip the `src` folder) and import it.
-4. Store credentials as encrypted Automation variables: `GraphClientId`, `GraphClientSecret`,
-   `Pax8ClientId`, `Pax8ClientSecret`. The runbook already reads these via `Get-AutomationVariable`.
-   - Alternatively, if the Automation account lives in the customer tenant, grant its managed identity
-     `Organization.Read.All` and `Directory.Read.All` and run with `-UseManagedIdentity`.
-5. Make the config available: embed the settings and tenant JSON in the runbook, store them as
-   Automation variables, or read them from a storage account. The runbook needs the tenant values
-   (`msTenantId`, `pax8CompanyId`, `skuMap`, `microsoftProvisioning`) and settings (`locationMpnId`,
-   buffers, gates).
-6. Create the runbook from `Invoke-LicenseSync.ps1`, set parameters, and attach a schedule. Native
-   Automation schedules are hourly minimum; use offset schedules for a tighter cadence.
+Serverless and recommended for production. Uses a GitHub-backed runbook: Azure downloads the latest
+code from the private GitHub repo on every run, so updating the automation is just a git push.
+
+See `AZURE-DEPLOYMENT-SOP.md` for the full step-by-step portal walkthrough, including module imports,
+Automation Variables, runbook creation, scheduling, adding new clients, and going live.
+
+Key design points:
+- The runbook (`Start-Pax8LicenseSync.ps1`) is the only file pasted into Azure. It downloads the
+  rest of the project from GitHub at runtime.
+- Credentials (Graph and Pax8 secrets, GitHub PAT) live in encrypted Automation Variables.
+- Adding a client is creating a tenant JSON file and pushing to GitHub. No portal work.
+- Module imports (`Microsoft.Graph.Authentication`, `Microsoft.Graph.Identity.DirectoryManagement`,
+  runtime 7.2) are done once from the gallery.
 
 ## Credentials and rotation
 See README section "Credentials and rotation". Local uses `Set-Credentials.ps1` (DPAPI); Azure uses the

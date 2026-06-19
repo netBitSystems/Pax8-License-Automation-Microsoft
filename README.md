@@ -2,7 +2,7 @@
 
 Keeps each client's Microsoft 365 license quantities on Pax8 matched to actual usage. Every hour it reads how many seats are assigned in the client's tenant, then raises the matching Pax8 subscription so a small spare buffer is always available. It can also stand up a brand-new license the client has never had, and then maintain it from there.
 
-Microsoft Graph access is read only. Pax8 is the only place the tool ever writes. Assigning licenses to users stays a manual task in the Microsoft admin center.
+Microsoft Graph access is read only. Pax8 is the only place the tool ever writes.
 
 ## How it is deployed
 
@@ -67,11 +67,11 @@ Two credential pairs per deployment, both stored as encrypted Azure Automation v
 - `Pax8ClientId` and `Pax8ClientSecret`: your Pax8 partner API credential (Pax8 portal, Integrations, API Credentials). The same credential works for every client.
 - `GraphClientId` and `GraphClientSecret`: the Entra app registered in that client's tenant.
 
-To rotate, create a new secret (Entra app or Pax8), update the matching Automation variable, then run once to confirm. The setup tool also caches the Pax8 credential locally in `config/credentials.json`, which is git-ignored.
+To rotate, create a new secret (Entra app or Pax8), update the matching Automation variable, then run once to confirm.
 
 ## Notifications
 
-The sync emails the configured alert address, sent via Graph `Mail.Send` from the client's own tenant, whenever it takes an action (top-up, transition, or order) or hits an error. Runs with nothing to do send no email.
+The sync emails the configured alert address, sent via Graph `Mail.Send` from the client's own tenant, whenever it takes an action (top-up, transition, or order) or hits an error. Runs with nothing to do send no email. Client must have a netbit@clientdomain email address.
 
 ## Azure Automation variables
 
@@ -85,33 +85,3 @@ Created by the setup tool. Secrets are marked encrypted.
 - `RunExecute`, `true` to place real orders
 - `RunMockExecute`, `true` to run the live path with mock orders
 - `TenantConfig`, the client's JSON config
-
-## Repository layout
-
-- `tools/main.go`: source for `pax8tools.exe`.
-- `Start-Pax8LicenseSync.ps1`: the Azure Automation runbook. Downloads this repo, injects `TenantConfig`, runs the sync.
-- `Invoke-LicenseSync.ps1`: the sync engine entry point.
-- `src/Pax8.psm1`: Pax8 API (token, companies, products, subscriptions, orders).
-- `src/Graph.psm1`: Microsoft Graph, read only.
-- `src/LicenseLogic.psm1`: the decision logic (top-up, transition, order, wait, and brand-new via `initialSeats`).
-- `src/Notify.psm1`: email alerts.
-- `src/Logging.psm1`: structured logging.
-- `config/settings.json`: global settings and guardrails.
-- `config/sku-catalog.json`: curated license list shown in the setup wizard.
-- `config/microsoft-skus.json`: full Microsoft license reference for the friendly-name picker.
-- `config/tenants/_template.json`: reference template. Real client configs are never committed; they live only in each client's `TenantConfig` variable.
-- `tests/Test-NewLicensePlan.ps1`: unit test for the planner logic, with no API calls.
-
-## Building pax8tools.exe
-
-Go is required.
-
-```
-go build -C tools -o pax8tools.exe .
-```
-
-Then publish the binary on the GitHub Releases page.
-
-## Contributors
-
-Primary contributor: drumsey-netbit

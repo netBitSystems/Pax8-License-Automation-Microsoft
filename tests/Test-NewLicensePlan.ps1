@@ -5,6 +5,11 @@
 #   b) SKU absent + initialSeats>0       -> order the initial seats
 #   c) SKU absent + initialSeats=0       -> skipped (not in plan)
 #   d) SKU present + initialSeats set     -> initialSeats IGNORED, normal sizing
+# Plus the dynamic-downsizing-at-renewal behavior (scenario 2):
+#   e) Excess Pax8 qty + renewal in window -> downsize to assigned+buffer
+#   f) Excess Pax8 qty + renewal NOT in window -> none (hold until renewal)
+#   g) Large excess + renewal in window -> downsize capped at perRunMaxIncreasePerSku, stays >= floor
+#   h) Pax8 qty already at floor + renewal in window -> none
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $root 'src\Logging.psm1')      -Force
@@ -63,7 +68,60 @@ $d = $plan | Where-Object { $_.SkuPartNumber -eq 'EXISTING2' }
 Check 'd) existing ignores initialSeats (none)' ($d.Action -eq 'none') "action=$($d.Action)"
 Check 'd) existing desired=6 not 99'             ($d.Desired -eq 6)     "desired=$($d.Desired)"
 
+# ── Scenario 2: dynamic downsizing at renewal ──────────────────────────────
+# All four SKUs are present in the tenant and have an active Pax8 sub whose quantity is
+# at or above the floor (assigned + buffer). Renewals drive whether a reduction is allowed.
+$dnow = Get-Date
+$skuSummary2 = @(
+    [pscustomobject]@{ SkuPartNumber = 'DOWNME';  SkuId = 'g-d'; Enabled = 20; Consumed = 10 }  # floor 12
+    [pscustomobject]@{ SkuPartNumber = 'HOLDME';  SkuId = 'g-h'; Enabled = 20; Consumed = 10 }  # floor 12
+    [pscustomobject]@{ SkuPartNumber = 'BIGCUT';  SkuId = 'g-b'; Enabled = 40; Consumed = 5  }  # floor 7
+    [pscustomobject]@{ SkuPartNumber = 'ATFLOOR'; SkuId = 'g-a'; Enabled = 12; Consumed = 10 }  # floor 12
+)
+$pax8Subs2 = @(
+    [pscustomobject]@{ id = 'd-1'; productName = 'Down Me';  quantity = 20 }
+    [pscustomobject]@{ id = 'd-2'; productName = 'Hold Me';  quantity = 20 }
+    [pscustomobject]@{ id = 'd-3'; productName = 'Big Cut';  quantity = 40 }
+    [pscustomobject]@{ id = 'd-4'; productName = 'At Floor'; quantity = 12 }
+)
+$renewals2 = @(
+    [pscustomobject]@{ skuPartNumber = 'DOWNME';  isTrial = $false; nextLifecycleDateTime = $dnow.AddDays(5).ToString('o')  }  # in window
+    [pscustomobject]@{ skuPartNumber = 'HOLDME';  isTrial = $false; nextLifecycleDateTime = $dnow.AddDays(60).ToString('o') }  # not in window
+    [pscustomobject]@{ skuPartNumber = 'BIGCUT';  isTrial = $false; nextLifecycleDateTime = $dnow.AddDays(3).ToString('o')  }  # in window
+    [pscustomobject]@{ skuPartNumber = 'ATFLOOR'; isTrial = $false; nextLifecycleDateTime = $dnow.AddDays(5).ToString('o')  }  # in window
+)
+$tenant2 = [pscustomobject]@{
+    greenfield = $false
+    skuMap     = @(
+        [pscustomobject]@{ skuPartNumber = 'DOWNME';  pax8ProductNameHint = 'Down Me';  pax8ProductId = 'pd1'; buffer = 2; maxSeats = 50; initialSeats = 0 }
+        [pscustomobject]@{ skuPartNumber = 'HOLDME';  pax8ProductNameHint = 'Hold Me';  pax8ProductId = 'pd2'; buffer = 2; maxSeats = 50; initialSeats = 0 }
+        [pscustomobject]@{ skuPartNumber = 'BIGCUT';  pax8ProductNameHint = 'Big Cut';  pax8ProductId = 'pd3'; buffer = 2; maxSeats = 50; initialSeats = 0 }
+        [pscustomobject]@{ skuPartNumber = 'ATFLOOR'; pax8ProductNameHint = 'At Floor'; pax8ProductId = 'pd4'; buffer = 2; maxSeats = 50; initialSeats = 0 }
+    )
+}
+$plan2 = New-LicensePlan -SkuSummary $skuSummary2 -TenantConfig $tenant2 -Settings $settings -Pax8Subscriptions $pax8Subs2 -Renewals $renewals2
+
+$e = $plan2 | Where-Object { $_.SkuPartNumber -eq 'DOWNME' }
+Check 'e) excess + renewal -> downsize'   ($e.Action -eq 'downsize')                       "action=$($e.Action)"
+Check 'e) downsize delta=-8'              ($e.DeltaSeats -eq -8)                           "delta=$($e.DeltaSeats)"
+Check 'e) downsize target=floor 12'       (($e.Pax8Qty + $e.DeltaSeats) -eq 12)            "target=$($e.Pax8Qty + $e.DeltaSeats)"
+Check 'e) never below assigned+buffer'    (($e.Pax8Qty + $e.DeltaSeats) -ge ($e.Assigned + $e.Buffer)) "target=$($e.Pax8Qty + $e.DeltaSeats) floor=$($e.Assigned + $e.Buffer)"
+
+$f = $plan2 | Where-Object { $_.SkuPartNumber -eq 'HOLDME' }
+Check 'f) excess but not in window -> none' ($f.Action -eq 'none')  "action=$($f.Action)"
+Check 'f) hold delta=0'                     ($f.DeltaSeats -eq 0)   "delta=$($f.DeltaSeats)"
+
+$g = $plan2 | Where-Object { $_.SkuPartNumber -eq 'BIGCUT' }
+Check 'g) big excess -> downsize'         ($g.Action -eq 'downsize')                       "action=$($g.Action)"
+Check 'g) downsize capped at -25'         ($g.DeltaSeats -eq -25)                          "delta=$($g.DeltaSeats)"
+Check 'g) capped target stays >= floor'   (($g.Pax8Qty + $g.DeltaSeats) -ge ($g.Assigned + $g.Buffer)) "target=$($g.Pax8Qty + $g.DeltaSeats) floor=$($g.Assigned + $g.Buffer)"
+
+$h = $plan2 | Where-Object { $_.SkuPartNumber -eq 'ATFLOOR' }
+Check 'h) already at floor -> none'       ($h.Action -eq 'none')  "action=$($h.Action)"
+Check 'h) at floor delta=0'               ($h.DeltaSeats -eq 0)   "delta=$($h.DeltaSeats)"
+
 Write-Host ''
-$plan | Format-Table SkuPartNumber, Assigned, Pax8Qty, Desired, Action, DeltaSeats -AutoSize | Out-String | Write-Host
+$plan  | Format-Table SkuPartNumber, Assigned, Pax8Qty, Desired, Action, DeltaSeats -AutoSize | Out-String | Write-Host
+$plan2 | Format-Table SkuPartNumber, Assigned, Pax8Qty, Desired, Action, DeltaSeats, RenewDate -AutoSize | Out-String | Write-Host
 if ($script:fail -eq 0) { Write-Host 'ALL TESTS PASSED' -ForegroundColor Green; exit 0 }
 else { Write-Host "$script:fail TEST(S) FAILED" -ForegroundColor Red; exit 1 }

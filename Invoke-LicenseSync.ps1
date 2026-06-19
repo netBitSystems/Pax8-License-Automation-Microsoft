@@ -105,7 +105,7 @@ foreach ($tf in $tenantFiles) {
 
     $err = 0
     foreach ($p in $plan) {
-        Write-Log -Level DECISION -Message ("{0}: {1} (+{2})" -f $p.SkuPartNumber, $p.Action, $p.DeltaSeats) -Data $p
+        Write-Log -Level DECISION -Message ("{0}: {1} ({2:+#;-#;0})" -f $p.SkuPartNumber, $p.Action, $p.DeltaSeats) -Data $p
 
         $doIt = $false
         if ($p.DeltaSeats -gt 0) {
@@ -114,11 +114,19 @@ foreach ($tf in $tenantFiles) {
                 'TopUp'      { $doIt = $p.Action -eq 'topup' }
                 'Transition' { $doIt = $p.Action -in 'transition','order' }
             }
+        } elseif ($p.DeltaSeats -lt 0 -and $p.Action -eq 'downsize') {
+            # Downsizing only happens inside the renewal window; run it in Both and Transition, not TopUp.
+            $doIt = $Mode -in 'Both','Transition'
         }
         if (-not $doIt) { continue }
 
+        # Quantity the Pax8 subscription/order will hold after this run. A downsize moves toward the
+        # floor by at most perRunMax, so it targets Pax8Qty + DeltaSeats (DeltaSeats is negative).
+        # Every other action drives to Desired.
+        $targetQty = if ($p.Action -eq 'downsize') { $p.Pax8Qty + $p.DeltaSeats } else { $p.Desired }
+
         if ($dryRun) {
-            Write-Log -Level INFO -Message ("DRY-RUN: would {0} {1} by {2} to {3}" -f $p.Action, $p.SkuPartNumber, $p.DeltaSeats, $p.Desired)
+            Write-Log -Level INFO -Message ("DRY-RUN: would {0} {1} by {2:+#;-#;0} to {3}" -f $p.Action, $p.SkuPartNumber, $p.DeltaSeats, $targetQty)
             continue
         }
         if ([bool]$settings.requireApproval -and -not $MockExecute) {
@@ -129,11 +137,12 @@ foreach ($tf in $tenantFiles) {
 
         $useMock = $MockExecute -or [bool]$settings.pax8.useMockOrders
         try {
-            if ($p.Action -eq 'topup' -and $p.Pax8SubscriptionId) {
+            if ($p.Action -in 'topup','downsize' -and $p.Pax8SubscriptionId) {
+                $verb = if ($p.Action -eq 'downsize') { 'lower' } else { 'raise' }
                 if ($MockExecute) {
-                    Write-Log -Level INFO -Message ("MOCK-EXECUTE: would raise {0} to {1} (no mock endpoint for quantity update; skipped)" -f $p.SkuPartNumber, $p.Desired)
+                    Write-Log -Level INFO -Message ("MOCK-EXECUTE: would {0} {1} to {2} (no mock endpoint for quantity update; skipped)" -f $verb, $p.SkuPartNumber, $targetQty)
                 } else {
-                    Set-Pax8SubscriptionQuantity -SubscriptionId $p.Pax8SubscriptionId -Quantity $p.Desired
+                    Set-Pax8SubscriptionQuantity -SubscriptionId $p.Pax8SubscriptionId -Quantity $targetQty
                 }
             } else {
                 # Prefer the stored product ID from tenant config (set by the onboarding wizard).
@@ -156,10 +165,13 @@ foreach ($tf in $tenantFiles) {
         }
     }
 
-    $actionable = @($plan | Where-Object { $_.DeltaSeats -gt 0 -and $_.Action -in 'topup','transition','order' })
+    $actionable = @($plan | Where-Object { $_.DeltaSeats -ne 0 -and $_.Action -in 'topup','transition','order','downsize' })
     if ($actionable.Count -or $err) {
         $runType = if ($dryRun) { 'DRY-RUN' } elseif ($MockExecute) { 'MOCK' } else { 'LIVE' }
-        $lines = $actionable | ForEach-Object { '{0}: {1} +{2} -> {3} (renew {4})' -f $_.SkuPartNumber, $_.Action, $_.DeltaSeats, $_.Desired, $_.RenewDate }
+        $lines = $actionable | ForEach-Object {
+            $tgt = if ($_.Action -eq 'downsize') { $_.Pax8Qty + $_.DeltaSeats } else { $_.Desired }
+            '{0}: {1} {2:+#;-#;0} -> {3} (renew {4})' -f $_.SkuPartNumber, $_.Action, $_.DeltaSeats, $tgt, $_.RenewDate
+        }
         $subject = 'Pax8 License Sync [{0}] {1} - {2} action(s), {3} error(s)' -f $runType, $tenant.displayName, $actionable.Count, $err
         $alertBody = "Tenant: {0}`nMode: {1}`n`n{2}" -f $tenant.displayName, $runType, ($lines -join "`n")
         if ($err) { $alertBody += "`n`n{0} error(s) this run - see the log." -f $err }

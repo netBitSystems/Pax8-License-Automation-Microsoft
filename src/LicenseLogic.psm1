@@ -88,6 +88,26 @@ function New-LicensePlan {
                 $reason = "No active Pax8 subscription; renewal not within $leadDays days"
             }
             if (($pax8Qty + $delta) -ge $maxSeats) { $reason += " (capped at maxSeats $maxSeats)" }
+        } elseif ($pax8Qty -gt $desired) {
+            # Excess Pax8 seats. Microsoft NCE annual terms only allow reductions at renewal, so
+            # downsize only inside the lead window, only for an active Pax8 sub on a license that
+            # is present in the tenant, and never below assigned + buffer. The per-run decrease
+            # mirrors the perRunMaxIncreasePerSku cap used for increases.
+            $floor = $assigned + $buffer
+            if ($inTenant -and $pax8Sub -and $renewSoon -and ($pax8Qty -gt $floor)) {
+                $reduce = [math]::Min($pax8Qty - $floor, $perRunMax)
+                $delta  = -1 * $reduce
+                $action = 'downsize'
+                $reason = "Renewal $($renewDate.ToString('yyyy-MM-dd')) within $leadDays days; reduce Pax8 qty $pax8Qty -> $($pax8Qty - $reduce) (floor assigned $assigned + buffer $buffer)"
+            } elseif (-not $renewSoon) {
+                $reason = "Pax8 qty $pax8Qty above desired $desired; holding until renewal window ($leadDays days)"
+            } elseif (-not $pax8Sub) {
+                $reason = "Pax8 qty $pax8Qty above desired $desired but no active Pax8 subscription to reduce"
+            } elseif (-not $inTenant) {
+                $reason = "Pax8 qty $pax8Qty above desired $desired but license not present in tenant; not downsizing"
+            } else {
+                $reason = "Pax8 qty $pax8Qty already at floor (assigned $assigned + buffer $buffer); no downsize"
+            }
         }
 
         $plan += [pscustomobject]@{

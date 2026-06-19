@@ -1,6 +1,6 @@
 # Pax8 License Automation
 
-Keeps each client's Microsoft 365 license quantities on Pax8 matched to actual usage. Every hour it reads how many seats are assigned in the client's tenant, then raises the matching Pax8 subscription so a small spare buffer is always available. It can also stand up a brand-new license the client has never had, and then maintain it from there.
+Keeps each client's Microsoft 365 license quantities on Pax8 matched to actual usage. Every hour it reads how many seats are assigned in the client's tenant, then raises the matching Pax8 subscription so a small spare buffer is always available. As a subscription nears its renewal date it also trims unused seats back down, so the client stops paying for licenses nobody is using. It can also stand up a brand-new license the client has never had, and then maintain it from there.
 
 Microsoft Graph access is read only. Pax8 is the only place the tool ever writes.
 
@@ -48,14 +48,14 @@ For each license in the client's `skuMap`:
 - Target seats = assigned + buffer, capped at `maxSeats`.
 - If the Pax8 quantity is below target, it raises it: a top-up when a Pax8 subscription already exists, or a new order otherwise.
 - Brand-new license: if the license is not in the tenant yet and `initialSeats` is set, it places that first order, then normal top-up takes over once the license shows up in the tenant. `initialSeats` is ignored for a license that already exists in the tenant.
-- It never decreases quantities. Microsoft NCE annual terms only allow reductions at renewal.
+- If the Pax8 quantity is above target and the subscription is inside its renewal window (`leadDays`), it lowers the quantity toward target, never below assigned + buffer. Microsoft NCE annual terms only allow reductions at renewal, so it holds until that window. Downsizing only touches a license that is still present in the tenant and has an active Pax8 subscription.
 
 ## Safety controls
 
 - `RunExecute = false` (Automation variable) stops all purchasing immediately.
 - `RunMockExecute = true` runs the full live path but sends Pax8 orders with `isMock=true`, validating everything without spending. Use this for the first run.
 - `config/settings.json` carries `dryRun`, `requireApproval`, and `pax8.useMockOrders` as additional brakes.
-- `perRunMaxIncreasePerSku` caps how many seats can be added per SKU in one run, and each SKU has its own `maxSeats` cap.
+- `perRunMaxIncreasePerSku` caps how many seats can be added or removed per SKU in one run, and each SKU has its own `maxSeats` cap.
 - Pax8 allows cancelling a new NCE order within 7 days from the portal.
 
 Recommended first run for any client: set `RunMockExecute = true`, confirm the plan in the run output, then switch to `RunExecute = true` and `RunMockExecute = false`.
@@ -71,7 +71,7 @@ To rotate, create a new secret (Entra app or Pax8), update the matching Automati
 
 ## Notifications
 
-The sync emails the configured alert address, sent via Graph `Mail.Send` from the client's own tenant, whenever it takes an action (top-up, transition, or order) or hits an error. Runs with nothing to do send no email. Client must have a netbit@clientdomain email address.
+The sync emails the configured alert address, sent via Graph `Mail.Send` from the client's own tenant, whenever it takes an action (top-up, transition, order, or downsize) or hits an error. Runs with nothing to do send no email. Client must have a netbit@clientdomain email address.
 
 ## Azure Automation variables
 

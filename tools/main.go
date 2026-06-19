@@ -23,7 +23,7 @@ import (
 
 // ── ANSI colors ────────────────────────────────────────────────────────────
 const (
-	appVersion = "v1.8 - dynamic downsizing at renewal"
+	appVersion = "v1.9 - delta-based pooled purchasing"
 	cReset     = "\033[0m"
 	cBlue      = "\033[34m"
 	cCyan      = "\033[36m"

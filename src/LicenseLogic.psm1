@@ -8,9 +8,8 @@ function New-LicensePlan {
         $Pax8Subscriptions,
         $Renewals
     )
-    $now       = Get-Date
-    $leadDays  = [int]$Settings.leadDays
-    $perRunMax = [int]$Settings.guardrails.perRunMaxIncreasePerSku
+    $now      = Get-Date
+    $leadDays = [int]$Settings.leadDays
     $plan = @()
 
     foreach ($entry in $TenantConfig.skuMap) {
@@ -64,49 +63,41 @@ function New-LicensePlan {
             }
         }
 
+        # Pooled licenses: MsEnabled is the whole pool across channels. Seats already covered off
+        # Pax8 (Microsoft direct, EA, trial) are MsEnabled - Pax8Qty, so Pax8 only needs to make up
+        # the rest. That makes the buy a delta instead of the full desired. The max(0, ...) clamp
+        # avoids an over-buy when Graph has not yet reflected a just-placed Pax8 order.
+        $directSeats = [math]::Max(0, $msEnabled - $pax8Qty)
+        $desiredPax8 = [math]::Max(0, [math]::Min($desired - $directSeats, $maxSeats))
+
         $action = 'none'
         $delta  = 0
-        $reason = "Pax8 qty $pax8Qty already covers desired $desired"
-        if ($pax8Qty -lt $desired) {
-            $needed = $desired - $pax8Qty
-            if ($needed -gt $perRunMax) { $needed = $perRunMax }
-            $delta = $needed
+        $reason = "Pax8 qty $pax8Qty matches needed $desiredPax8 (desired $desired; $directSeats covered off Pax8)"
+        if ($pax8Qty -lt $desiredPax8) {
+            # Short on Pax8: buy the delta now. No per-run cap; maxSeats already bounds desiredPax8.
+            $delta = $desiredPax8 - $pax8Qty
             if ($pax8Sub) {
                 $action = 'topup'
-                $reason = "Pax8 qty $pax8Qty below desired $desired (assigned $assigned + buffer $buffer)"
-            } elseif (-not $inTenant) {
-                $action = 'order'
-                $reason = "New product not yet in tenant; placing initial order of $desired seats"
-            } elseif ($renewSoon) {
-                $action = 'transition'
-                $reason = "Renewal date $($renewDate.ToString('yyyy-MM-dd')); order $desired seats on Pax8"
-            } elseif ([bool]$TenantConfig.greenfield) {
-                $action = 'order'
-                $reason = "Greenfield: no existing Pax8 subscription; ordering $desired seats"
+                $reason = "Pax8 short by $delta; raising $pax8Qty -> $desiredPax8 (desired $desired; $directSeats covered off Pax8)"
             } else {
-                $action = 'wait'
-                $reason = "No active Pax8 subscription; renewal not within $leadDays days"
+                $action = 'order'
+                $reason = "No Pax8 subscription yet; ordering $desiredPax8 (desired $desired; $directSeats covered off Pax8)"
             }
-            if (($pax8Qty + $delta) -ge $maxSeats) { $reason += " (capped at maxSeats $maxSeats)" }
-        } elseif ($pax8Qty -gt $desired) {
-            # Excess Pax8 seats. Microsoft NCE annual terms only allow reductions at renewal, so
-            # downsize only inside the lead window, only for an active Pax8 sub on a license that
-            # is present in the tenant, and never below assigned + buffer. The per-run decrease
-            # mirrors the perRunMaxIncreasePerSku cap used for increases.
-            $floor = $assigned + $buffer
-            if ($inTenant -and $pax8Sub -and $renewSoon -and ($pax8Qty -gt $floor)) {
-                $reduce = [math]::Min($pax8Qty - $floor, $perRunMax)
-                $delta  = -1 * $reduce
+            if ($desiredPax8 -ge $maxSeats) { $reason += " (capped at maxSeats $maxSeats)" }
+        } elseif ($pax8Qty -gt $desiredPax8) {
+            # Excess on Pax8. Microsoft NCE annual terms only allow reductions at renewal, so only
+            # downsize inside the lead window, only for an active Pax8 sub on a license present in
+            # the tenant. desiredPax8 keeps the pool whole, so it is the floor.
+            if ($inTenant -and $pax8Sub -and $renewSoon) {
+                $delta  = $desiredPax8 - $pax8Qty
                 $action = 'downsize'
-                $reason = "Renewal $($renewDate.ToString('yyyy-MM-dd')) within $leadDays days; reduce Pax8 qty $pax8Qty -> $($pax8Qty - $reduce) (floor assigned $assigned + buffer $buffer)"
+                $reason = "Renewal $($renewDate.ToString('yyyy-MM-dd')) within $leadDays days; reducing Pax8 $pax8Qty -> $desiredPax8 (desired $desired; $directSeats covered off Pax8)"
             } elseif (-not $renewSoon) {
-                $reason = "Pax8 qty $pax8Qty above desired $desired; holding until renewal window ($leadDays days)"
+                $reason = "Pax8 qty $pax8Qty above needed $desiredPax8; holding until renewal window ($leadDays days)"
             } elseif (-not $pax8Sub) {
-                $reason = "Pax8 qty $pax8Qty above desired $desired but no active Pax8 subscription to reduce"
-            } elseif (-not $inTenant) {
-                $reason = "Pax8 qty $pax8Qty above desired $desired but license not present in tenant; not downsizing"
+                $reason = "Pax8 qty $pax8Qty above needed $desiredPax8 but no active Pax8 subscription to reduce"
             } else {
-                $reason = "Pax8 qty $pax8Qty already at floor (assigned $assigned + buffer $buffer); no downsize"
+                $reason = "Pax8 qty $pax8Qty above needed $desiredPax8 but license not present in tenant; not downsizing"
             }
         }
 
@@ -119,6 +110,8 @@ function New-LicensePlan {
             MaxSeats            = $maxSeats
             Pax8Qty             = $pax8Qty
             Desired             = $desired
+            DirectSeats         = $directSeats
+            DesiredPax8         = $desiredPax8
             Action              = $action
             DeltaSeats          = $delta
             RenewDate           = if ($renewDate) { $renewDate.ToString('yyyy-MM-dd') } else { '' }

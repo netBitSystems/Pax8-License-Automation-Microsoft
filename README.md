@@ -44,18 +44,19 @@ It merges the new entries, saves the updated `TenantConfig`, and copies it to th
 
 For each license in the client's `skuMap`:
 
-- It reads the assigned seat count from the tenant, matched by Microsoft `skuPartNumber`.
-- Target seats = assigned + buffer, capped at `maxSeats`.
-- If the Pax8 quantity is below target, it raises it: a top-up when a Pax8 subscription already exists, or a new order otherwise.
-- Brand-new license: if the license is not in the tenant yet and `initialSeats` is set, it places that first order, then normal top-up takes over once the license shows up in the tenant. `initialSeats` is ignored for a license that already exists in the tenant.
-- If the Pax8 quantity is above target and the subscription is inside its renewal window (`leadDays`), it lowers the quantity toward target, never below assigned + buffer. Microsoft NCE annual terms only allow reductions at renewal, so it holds until that window. Downsizing only touches a license that is still present in the tenant and has an active Pax8 subscription.
+- It reads the assigned seats and the total the tenant already owns for that SKU. Licenses are pooled, so Microsoft `prepaidUnits.enabled` counts every channel together: Microsoft direct, Pax8, EA, and trials.
+- Target for the tenant = assigned + buffer, capped at `maxSeats`.
+- Pax8 only fills the gap the other channels do not cover, so the amount it buys is a delta: `desiredPax8 = (assigned + buffer) minus the owned seats that are not on Pax8`. It buys that delta right away, as a top-up when a Pax8 subscription already exists or a new order otherwise. It does not wait for renewal to cover a genuine shortfall, and it does not double buy seats the client still has on a Microsoft direct subscription.
+- As Microsoft direct subscriptions fall off at their renewal, the owned-elsewhere count drops and the Pax8 quantity grows to match, keeping one Pax8 subscription per SKU.
+- Brand-new license: if the license is not in the tenant yet and `initialSeats` is set, it places that first order, then the delta logic takes over once the license shows up. `initialSeats` is ignored once the license exists in the tenant.
+- If Pax8 holds more than the pool needs and the subscription is inside its renewal window (`leadDays`), it lowers the quantity, never below what the pool still needs. Microsoft NCE annual terms only allow reductions at renewal, so it holds until that window.
 
 ## Safety controls
 
 - `RunExecute = false` (Automation variable) stops all purchasing immediately.
 - `RunMockExecute = true` runs the full live path but sends Pax8 orders with `isMock=true`, validating everything without spending. Use this for the first run.
 - `config/settings.json` carries `dryRun`, `requireApproval`, and `pax8.useMockOrders` as additional brakes.
-- `perRunMaxIncreasePerSku` caps how many seats can be added or removed per SKU in one run, and each SKU has its own `maxSeats` cap.
+- Each SKU has its own `maxSeats` value, the hard ceiling on the Pax8 quantity for that SKU.
 - Pax8 allows cancelling a new NCE order within 7 days from the portal.
 
 Recommended first run for any client: set `RunMockExecute = true`, confirm the plan in the run output, then switch to `RunExecute = true` and `RunMockExecute = false`.
@@ -71,7 +72,7 @@ To rotate, create a new secret (Entra app or Pax8), update the matching Automati
 
 ## Notifications
 
-The sync emails the configured alert address, sent via Graph `Mail.Send` from the client's own tenant, whenever it takes an action (top-up, transition, order, or downsize) or hits an error. Runs with nothing to do send no email. Client must have a netbit@clientdomain email address.
+The sync emails the configured alert address, sent via Graph `Mail.Send` from the client's own tenant, whenever it takes an action (top-up, order, or downsize) or hits an error. Runs with nothing to do send no email. Client must have a netbit@clientdomain email address.
 
 ## Azure Automation variables
 

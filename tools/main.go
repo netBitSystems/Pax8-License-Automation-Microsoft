@@ -23,7 +23,7 @@ import (
 
 // ── ANSI colors ────────────────────────────────────────────────────────────
 const (
-	appVersion = "v1.3 - guided client setup"
+	appVersion = "v1.7 - new-product provisioning"
 	cReset     = "\033[0m"
 	cBlue      = "\033[34m"
 	cCyan      = "\033[36m"
@@ -62,6 +62,16 @@ type CatalogEntry struct {
 	DefaultMaxSeats int    `json:"defaultMaxSeats"`
 }
 
+type MicrosoftSkuFile struct {
+	Skus []MicrosoftSku `json:"skus"`
+}
+
+type MicrosoftSku struct {
+	DisplayName   string `json:"displayName"`
+	SkuPartNumber string `json:"skuPartNumber"`
+	SkuId         string `json:"skuId"`
+}
+
 type Pax8Product struct {
 	Id   string `json:"id"`
 	Name string `json:"name"`
@@ -80,6 +90,7 @@ type SkuMapEntry struct {
 	Pax8ProductNameHint string `json:"pax8ProductNameHint"`
 	Buffer              int    `json:"buffer"`
 	MaxSeats            int    `json:"maxSeats"`
+	InitialSeats        int    `json:"initialSeats,omitempty"`
 }
 
 type Provisioning struct {
@@ -123,13 +134,16 @@ func showMenu() {
 	fmt.Printf("  %s%s%s\n\n", cGray, appVersion, cReset)
 	fmt.Println()
 	fmt.Printf("  %s[1]%s  Set up a client\n", cCyan, cReset)
-	fmt.Printf("  %s[2]%s  Exit\n", cCyan, cReset)
+	fmt.Printf("  %s[2]%s  Add SKUs to an existing client\n", cCyan, cReset)
+	fmt.Printf("  %s[3]%s  Exit\n", cCyan, cReset)
 	fmt.Println()
 	choice := ask("  Enter choice")
 	switch choice {
 	case "1":
 		runClientWizard()
 	case "2":
+		runAddSkusWizard()
+	case "3":
 		os.Exit(0)
 	}
 }
@@ -309,18 +323,25 @@ func runClientWizard() {
 		fmt.Println()
 		step("Select the licenses this client will use. The automation maintains a buffer of spare")
 		step("seats and automatically tops up via Pax8 when assignments get close to the limit.")
+		step("Not listed? After the catalog you can search the full Pax8 catalog to add custom SKUs.")
 		fmt.Println()
 
 		selected := selectLicensesFromCatalog(catalog)
-		if len(selected) == 0 {
-			fail("No licenses selected. At least one license is required.")
-			wait("Press Enter to return to menu")
+		var products []Pax8Product
+		loaded := true
+		if len(selected) > 0 {
+			fmt.Printf("\n  %s%d license(s) selected.%s\n", cGreen, len(selected), cReset)
+			skuMap, products, loaded = matchToPax8Products(selected, pax8Token)
+		} else {
+			products, loaded = loadPax8Catalog(pax8Token)
+		}
+		if !loaded {
 			return
 		}
-		fmt.Printf("\n  %s%d license(s) selected.%s\n", cGreen, len(selected), cReset)
-
-		skuMap = matchToPax8Products(selected, pax8Token)
-		if skuMap == nil {
+		skuMap = append(skuMap, addCustomPax8Skus(products, partNumberSet(skuMap))...)
+		if len(skuMap) == 0 {
+			fail("No licenses configured. At least one is required.")
+			wait("Press Enter to return to menu")
 			return
 		}
 
@@ -357,8 +378,9 @@ func runClientWizard() {
 		fmt.Println()
 		wait("Press Enter to continue to Pax8 product matching")
 
-		skuMap = matchToPax8Products(migrationList, pax8Token)
-		if skuMap == nil {
+		var loaded bool
+		skuMap, _, loaded = matchToPax8Products(migrationList, pax8Token)
+		if !loaded {
 			return
 		}
 	}
@@ -428,6 +450,99 @@ func runClientWizard() {
 		}
 		fmt.Println()
 	}
+
+	wait("Press Enter to return to the main menu")
+}
+
+// ── Add SKUs to existing client ────────────────────────────────────────────
+func runAddSkusWizard() {
+	cls()
+	bar("Add SKUs to Existing Client", "Add new license SKUs to a client that is already set up.")
+
+	// ── Step 1: Select the client ─────────────────────────────────────────
+	section("Step 1 of 4", "Select Client")
+	config, srcPath, found := pickTenantConfig()
+	if !found {
+		wait("Press Enter to return to the main menu")
+		return
+	}
+	fmt.Printf("\n  %s✓ Loaded %s (%s)%s\n", cGreen, config.DisplayName, config.TenantKey, cReset)
+
+	// ── Step 2: Show currently configured SKUs ────────────────────────────
+	section("Step 2 of 4", "Currently Configured SKUs")
+	if len(config.SkuMap) == 0 {
+		fmt.Printf("  %sNo SKUs configured yet.%s\n", cGray, cReset)
+	} else {
+		for _, e := range config.SkuMap {
+			fmt.Printf("  %s•%s %s %s(%s)%s\n", cGreen, cReset, e.DisplayName, cGray, e.SkuPartNumber, cReset)
+		}
+	}
+
+	// ── Step 3: Pax8 connection ───────────────────────────────────────────
+	section("Step 3 of 4", "Pax8 Connection")
+	pax8Token := connectPax8()
+
+	// ── Step 4: Add SKUs from the Pax8 catalog ────────────────────────────
+	section("Step 4 of 4", "Add SKUs from the Pax8 Catalog")
+	fmt.Println()
+	step("Search the live Pax8 catalog for the product(s) to add for this client.")
+	products, loaded := loadPax8Catalog(pax8Token)
+	if !loaded {
+		return
+	}
+
+	newEntries := addCustomPax8Skus(products, partNumberSet(config.SkuMap))
+	if len(newEntries) == 0 {
+		fail("No SKUs added. Nothing to update.")
+		wait("Press Enter to return to the main menu")
+		return
+	}
+
+	// Merge new entries into the existing skuMap (replace on match, else append).
+	for _, ne := range newEntries {
+		replaced := false
+		for i := range config.SkuMap {
+			if strings.EqualFold(config.SkuMap[i].SkuPartNumber, ne.SkuPartNumber) {
+				config.SkuMap[i] = ne
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			config.SkuMap = append(config.SkuMap, ne)
+		}
+	}
+
+	// Save the updated config locally and copy to clipboard.
+	outPath := filepath.Join(root, "config", "tenants", config.TenantKey+".json")
+	os.MkdirAll(filepath.Dir(outPath), 0755)
+	data, _ := json.MarshalIndent(config, "", "  ")
+	os.WriteFile(outPath, data, 0644)
+	copyToClipboard(string(data))
+
+	// ── Final instructions ────────────────────────────────────────────────
+	bar("SKUs Added", "")
+	fmt.Printf("  %s✓  Updated config saved: %s%s%s\n", cGreen, cCyan, outPath, cReset)
+	if srcPath != "" && !strings.EqualFold(srcPath, outPath) {
+		fmt.Printf("  %s   (loaded from %s)%s\n", cGray, srcPath, cReset)
+	}
+	fmt.Printf("  %s✓  Updated JSON copied to clipboard.%s\n\n", cGreen, cReset)
+
+	fmt.Printf("  %sNewly added SKUs:%s\n", cWhite, cReset)
+	for _, e := range newEntries {
+		fmt.Printf("  %s•%s %s\n", cGreen, cReset, e.DisplayName)
+	}
+	fmt.Println()
+
+	step("Update the client's Azure Automation TenantConfig variable:")
+	fmt.Println()
+	step("1. Azure portal → Automation Accounts → Pax8LicenseAutomation")
+	step("2. Shared Resources → Variables → click TenantConfig → Edit value")
+	step("3. Select all (Ctrl+A), delete, then paste from clipboard (Ctrl+V) → Save")
+	fmt.Println()
+	step("The next hourly run picks up the new SKUs. For a license still on Microsoft direct,")
+	step("Pax8 ordering only begins once the direct subscription is cancelled.")
+	fmt.Println()
 
 	wait("Press Enter to return to the main menu")
 }
@@ -605,51 +720,85 @@ func selectLicensesFromCatalog(catalog []CatalogEntry) []CatalogEntry {
 }
 
 // ── Pax8 product matching ──────────────────────────────────────────────────
-func matchToPax8Products(entries []CatalogEntry, pax8Token string) []SkuMapEntry {
-	bar("Pax8 Product Matching", "Match each license to the correct Pax8 product.")
-	fmt.Println()
-	step("Search the live Pax8 catalog and select the matching product for each license.")
-	step("Prefer 'New Commerce' products when available — they match the current Microsoft CSP model.")
-	fmt.Printf("  %sLoading Pax8 product catalog...%s\n\n", cGray, cReset)
+// selectPax8Product runs the interactive search/select loop against the loaded
+// Pax8 catalog. defaultTerm pre-fills the search (Enter accepts it). When
+// allowCancel is true and there is no default term, an empty entry cancels and
+// returns nil; otherwise the loop continues until a product is chosen.
+func selectPax8Product(products []Pax8Product, defaultTerm string, allowCancel bool) *Pax8Product {
+	for {
+		prompt := "  Search term"
+		if defaultTerm != "" {
+			prompt = "  Search term (press Enter to use '" + defaultTerm + "')"
+		} else if allowCancel {
+			prompt = "  Search term (press Enter to cancel)"
+		}
+		searchTerm := ask(prompt)
+		if searchTerm == "" {
+			if defaultTerm != "" {
+				searchTerm = defaultTerm
+			} else if allowCancel {
+				return nil
+			} else {
+				continue
+			}
+		}
+		results := searchProducts(products, searchTerm)
+		if len(results) == 0 {
+			fmt.Printf("  %sNo results.%s Try a shorter or different term.\n", cRed, cReset)
+			continue
+		}
+		limit := 15
+		if len(results) < limit {
+			limit = len(results)
+		}
+		fmt.Println()
+		for i := 0; i < limit; i++ {
+			fmt.Printf("  [%d] %s\n", i+1, results[i].Name)
+		}
+		fmt.Printf("  [0] Search again\n\n")
+		pickStr := ask("  Select number")
+		n, parseErr := strconv.Atoi(pickStr)
+		if parseErr == nil && n >= 1 && n <= limit {
+			p := results[n-1]
+			fmt.Printf("  %s✓ %s%s\n", cGreen, p.Name, cReset)
+			return &p
+		}
+	}
+}
 
+// loadPax8Catalog fetches the full live Pax8 product list with progress output.
+func loadPax8Catalog(pax8Token string) ([]Pax8Product, bool) {
+	fmt.Printf("  %sLoading Pax8 product catalog...%s\n\n", cGray, cReset)
 	products, err := getAllPax8Products(pax8Token)
 	if err != nil {
 		fail("Could not load Pax8 products: " + err.Error())
 		wait("Press Enter to return to menu")
-		return nil
+		return nil, false
 	}
-	fmt.Printf("  %s%d products loaded.%s\n\n", cGray, len(products), cReset)
+	fmt.Printf("  %s%d products loaded.%s\n", cGray, len(products), cReset)
+	return products, true
+}
+
+// matchToPax8Products maps each curated catalog entry to a Pax8 product. It returns
+// the mapped entries, the loaded Pax8 catalog (for reuse), and whether the catalog
+// loaded successfully.
+func matchToPax8Products(entries []CatalogEntry, pax8Token string) ([]SkuMapEntry, []Pax8Product, bool) {
+	bar("Pax8 Product Matching", "Match each license to the correct Pax8 product.")
+	fmt.Println()
+	step("Search the live Pax8 catalog and select the matching product for each license.")
+	step("Prefer 'New Commerce' products when available — they match the current Microsoft CSP model.")
+	products, loaded := loadPax8Catalog(pax8Token)
+	if !loaded {
+		return nil, nil, false
+	}
+	fmt.Println()
 
 	var skuMap []SkuMapEntry
 	for _, e := range entries {
 		fmt.Printf("\n  %s── %s ──%s\n", cCyan, e.DisplayName, cReset)
-		var chosen *Pax8Product
-		for chosen == nil {
-			searchTerm := ask("  Search term (press Enter to use '" + e.DisplayName + "')")
-			if searchTerm == "" {
-				searchTerm = e.DisplayName
-			}
-			results := searchProducts(products, searchTerm)
-			if len(results) == 0 {
-				fmt.Printf("  %sNo results.%s Try a shorter or different term.\n", cRed, cReset)
-				continue
-			}
-			limit := 15
-			if len(results) < limit {
-				limit = len(results)
-			}
-			fmt.Println()
-			for i := 0; i < limit; i++ {
-				fmt.Printf("  [%d] %s\n", i+1, results[i].Name)
-			}
-			fmt.Printf("  [0] Search again\n\n")
-			pickStr := ask("  Select number")
-			n, parseErr := strconv.Atoi(pickStr)
-			if parseErr == nil && n >= 1 && n <= limit {
-				p := results[n-1]
-				chosen = &p
-				fmt.Printf("  %s✓ %s%s\n", cGreen, chosen.Name, cReset)
-			}
+		chosen := selectPax8Product(products, e.DisplayName, false)
+		if chosen == nil {
+			continue
 		}
 
 		bufStr := ask(fmt.Sprintf("  Buffer seats — spare seats to keep available at all times (default %d)", e.DefaultBuffer))
@@ -673,7 +822,161 @@ func matchToPax8Products(entries []CatalogEntry, pax8Token string) []SkuMapEntry
 			MaxSeats:            maxS,
 		})
 	}
-	return skuMap
+	return skuMap, products, true
+}
+
+// addCustomPax8Skus lets the user search the live Pax8 catalog and add SKUs that are
+// not in the curated catalog. The Pax8 product is what gets ordered; the Microsoft
+// license (picked by friendly name) is what the sync engine counts in the tenant.
+// taken holds the skuPartNumbers already configured (lowercased) and is updated here.
+func addCustomPax8Skus(products []Pax8Product, taken map[string]bool) []SkuMapEntry {
+	msSkus := loadMicrosoftSkus()
+	var out []SkuMapEntry
+	for {
+		fmt.Println()
+		if !askYN("Add a SKU by searching the full Pax8 catalog?") {
+			break
+		}
+		fmt.Printf("\n  %s── Pax8 product (what gets ordered) ──%s\n", cCyan, cReset)
+		chosen := selectPax8Product(products, "", true)
+		if chosen == nil {
+			continue
+		}
+
+		var partNum, skuId, defName string
+		if len(msSkus) > 0 {
+			fmt.Printf("\n  %s── Microsoft license (what the tool counts in the tenant) ──%s\n", cCyan, cReset)
+			step("Pick the Microsoft license this product provisions (auto-searched from the Pax8 name).")
+			ms := selectMicrosoftSku(msSkus, cleanProductName(chosen.Name))
+			partNum, skuId, defName = ms.SkuPartNumber, ms.SkuId, ms.DisplayName
+		} else {
+			fmt.Println()
+			fail("Microsoft license list unavailable; enter the skuPartNumber manually.")
+			partNum = ask("  Microsoft skuPartNumber")
+			skuId = ask("  Microsoft skuId (optional — press Enter to skip)")
+			defName = chosen.Name
+		}
+		if partNum == "" {
+			fail("Skipped — no Microsoft license identifier provided.")
+			continue
+		}
+		if taken[strings.ToLower(partNum)] {
+			fail("That Microsoft license is already configured for this client. Skipped.")
+			continue
+		}
+
+		displayName := ask("  Display name (press Enter to use '" + defName + "')")
+		if displayName == "" {
+			displayName = defName
+		}
+		buf := promptInt("  Buffer seats — spare seats to keep available (default 2)", 2)
+		maxS := promptInt("  Max seats cap — never order beyond this total (default 50)", 50)
+		fmt.Println()
+		step("If this license is brand new to the client (not in their Microsoft 365 yet), how many")
+		step("seats should the first Pax8 order buy? Enter 0 if it's already in use (top-up only).")
+		initSeats := promptInt("  Initial seats for a brand-new license (default 0)", 0)
+		if initSeats > maxS {
+			maxS = initSeats
+			fmt.Printf("  %sMax seats raised to %d to fit the initial order.%s\n", cGray, maxS, cReset)
+		}
+
+		out = append(out, SkuMapEntry{
+			SkuPartNumber:       partNum,
+			SkuId:               skuId,
+			DisplayName:         displayName,
+			Pax8ProductId:       chosen.Id,
+			Pax8ProductNameHint: chosen.Name,
+			Buffer:              buf,
+			MaxSeats:            maxS,
+			InitialSeats:        initSeats,
+		})
+		taken[strings.ToLower(partNum)] = true
+		fmt.Printf("  %s✓ Added %s%s\n", cGreen, displayName, cReset)
+	}
+	return out
+}
+
+// cleanProductName strips bracketed suffixes (e.g. "[New Commerce Experience]") so the
+// Pax8 product name can seed the Microsoft license search.
+func cleanProductName(name string) string {
+	if i := strings.Index(name, "["); i > 0 {
+		name = name[:i]
+	}
+	return strings.TrimSpace(name)
+}
+
+// searchMicrosoftSkus returns Microsoft licenses matching term by display name or code.
+func searchMicrosoftSkus(skus []MicrosoftSku, term string) []MicrosoftSku {
+	termRe := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(term))
+	var matches []MicrosoftSku
+	for _, s := range skus {
+		if termRe.MatchString(s.DisplayName) || termRe.MatchString(s.SkuPartNumber) {
+			matches = append(matches, s)
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		return len(matches[i].DisplayName) < len(matches[j].DisplayName)
+	})
+	if len(matches) > 50 {
+		matches = matches[:50]
+	}
+	return matches
+}
+
+// selectMicrosoftSku finds a Microsoft license. It searches automatically using
+// defaultTerm (derived from the Pax8 product name) and shows the matches to pick from,
+// so no typing is needed in the common case. Picking [0] (or an empty default / no
+// matches) prompts for a typed search term.
+func selectMicrosoftSku(skus []MicrosoftSku, defaultTerm string) MicrosoftSku {
+	term := strings.TrimSpace(defaultTerm)
+	for {
+		if term == "" {
+			term = strings.TrimSpace(ask("  Search Microsoft license name"))
+			if term == "" {
+				continue
+			}
+		}
+		results := searchMicrosoftSkus(skus, term)
+		if len(results) == 0 {
+			fmt.Printf("  %sNo Microsoft licenses match '%s'.%s Type part of the name.\n", cRed, term, cReset)
+			term = ""
+			continue
+		}
+		limit := 15
+		if len(results) < limit {
+			limit = len(results)
+		}
+		fmt.Printf("\n  %sMicrosoft licenses matching '%s':%s\n", cGray, term, cReset)
+		for i := 0; i < limit; i++ {
+			fmt.Printf("  [%d] %s  %s(%s)%s\n", i+1, results[i].DisplayName, cGray, results[i].SkuPartNumber, cReset)
+		}
+		fmt.Printf("  [0] Search by a different name\n\n")
+		n, perr := strconv.Atoi(ask("  Select number"))
+		if perr == nil && n >= 1 && n <= limit {
+			s := results[n-1]
+			fmt.Printf("  %s✓ %s%s\n", cGreen, s.DisplayName, cReset)
+			return s
+		}
+		// 0 or invalid input: prompt for a typed search on the next pass.
+		term = ""
+	}
+}
+
+// partNumberSet returns the lowercased skuPartNumbers present in entries.
+func partNumberSet(entries []SkuMapEntry) map[string]bool {
+	m := map[string]bool{}
+	for _, e := range entries {
+		m[strings.ToLower(e.SkuPartNumber)] = true
+	}
+	return m
+}
+
+// promptInt asks for an integer, returning def when the input is blank or invalid.
+func promptInt(prompt string, def int) int {
+	if n, err := strconv.Atoi(ask(prompt)); err == nil {
+		return n
+	}
+	return def
 }
 
 // ── Pax8 API ───────────────────────────────────────────────────────────────
@@ -851,6 +1154,149 @@ func loadCatalog() []CatalogEntry {
 	var cf CatalogFile
 	json.Unmarshal(data, &cf)
 	return cf.Licenses
+}
+
+// loadMicrosoftSkus loads the Microsoft license reference (friendly name, skuPartNumber, skuId).
+func loadMicrosoftSkus() []MicrosoftSku {
+	path := filepath.Join(root, "config", "microsoft-skus.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		os.MkdirAll(filepath.Dir(path), 0755)
+		resp, dlErr := http.Get("https://raw.githubusercontent.com/netBitSystems/Pax8-License-Automation-Microsoft/main/config/microsoft-skus.json")
+		if dlErr != nil || resp.StatusCode != 200 {
+			return nil
+		}
+		defer resp.Body.Close()
+		data, _ = io.ReadAll(resp.Body)
+		os.WriteFile(path, data, 0644)
+	}
+	var f MicrosoftSkuFile
+	json.Unmarshal(data, &f)
+	return f.Skus
+}
+
+// ── Tenant config selection (Add SKUs) ─────────────────────────────────────
+// pickTenantConfig lets the user choose a local tenant config or paste one.
+// Returns the config, its source path (empty when pasted), and whether selection succeeded.
+func pickTenantConfig() (TenantConfig, string, bool) {
+	paths := listLocalTenantConfigs()
+	fmt.Println()
+	if len(paths) > 0 {
+		step("Local client configs found:")
+		fmt.Println()
+		for i, p := range paths {
+			label := filepath.Base(p)
+			if cfg, err := loadTenantConfig(p); err == nil && cfg.DisplayName != "" {
+				label = fmt.Sprintf("%s  %s(%s)%s", cfg.DisplayName, cGray, filepath.Base(p), cReset)
+			}
+			fmt.Printf("  [%d] %s\n", i+1, label)
+		}
+		fmt.Printf("  [0] None of these — paste the TenantConfig JSON instead\n\n")
+		for {
+			pick := ask("  Select number")
+			n, err := strconv.Atoi(pick)
+			if err != nil {
+				continue
+			}
+			if n == 0 {
+				break
+			}
+			if n >= 1 && n <= len(paths) {
+				cfg, lerr := loadTenantConfig(paths[n-1])
+				if lerr != nil {
+					fail("Could not read that config: " + lerr.Error())
+					return TenantConfig{}, "", false
+				}
+				return cfg, paths[n-1], true
+			}
+		}
+	} else {
+		step("No local client configs found in config/tenants.")
+	}
+	cfg, parsedOK := readPastedTenantConfig()
+	if !parsedOK {
+		return TenantConfig{}, "", false
+	}
+	return cfg, "", true
+}
+
+// listLocalTenantConfigs returns paths to config/tenants/*.json, excluding the template.
+func listLocalTenantConfigs() []string {
+	dir := filepath.Join(root, "config", "tenants")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(strings.ToLower(name), ".json") {
+			continue
+		}
+		if strings.EqualFold(name, "_template.json") {
+			continue
+		}
+		paths = append(paths, filepath.Join(dir, name))
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func loadTenantConfig(path string) (TenantConfig, error) {
+	var cfg TenantConfig
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return cfg, err
+	}
+	err = json.Unmarshal(data, &cfg)
+	return cfg, err
+}
+
+// readPastedTenantConfig reads a multi-line JSON blob terminated by a line containing END.
+func readPastedTenantConfig() (TenantConfig, bool) {
+	var cfg TenantConfig
+	fmt.Println()
+	step("Paste the full TenantConfig JSON below.")
+	step("After pasting, press Enter, then type END on its own line and press Enter:")
+	fmt.Println()
+	var sb strings.Builder
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "END" {
+			break
+		}
+		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
+	if err := json.Unmarshal([]byte(sb.String()), &cfg); err != nil {
+		fail("That JSON could not be parsed: " + err.Error())
+		return cfg, false
+	}
+	if cfg.TenantKey == "" {
+		fail("Pasted config is missing tenantKey — cannot continue.")
+		return cfg, false
+	}
+	return cfg, true
+}
+
+// connectPax8 ensures a usable Pax8 token, prompting for credentials if needed.
+func connectPax8() string {
+	creds := loadCreds()
+	if creds.Pax8ClientId != "" && creds.Pax8ClientSecret != "" {
+		if tok, err := getPax8Token(creds.Pax8ClientId, creds.Pax8ClientSecret); err == nil {
+			ok("Pax8 connected")
+			return tok
+		}
+	}
+	fmt.Println()
+	step("Enter your Pax8 API credentials (Pax8 portal → Settings → Integrations → API Credentials).")
+	fmt.Println()
+	creds, token := promptForPax8Credentials(creds)
+	saveCreds(creds)
+	return token
 }
 
 // ── UI helpers ─────────────────────────────────────────────────────────────

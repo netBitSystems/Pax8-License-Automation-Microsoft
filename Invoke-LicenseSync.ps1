@@ -156,7 +156,7 @@ foreach ($tf in $tenantFiles) {
         }
     }
 
-    $actionable = @($plan | Where-Object { $_.DeltaSeats -gt 0 -and $_.Action -in 'topup','transition' })
+    $actionable = @($plan | Where-Object { $_.DeltaSeats -gt 0 -and $_.Action -in 'topup','transition','order' })
     if ($actionable.Count -or $err) {
         $runType = if ($dryRun) { 'DRY-RUN' } elseif ($MockExecute) { 'MOCK' } else { 'LIVE' }
         $lines = $actionable | ForEach-Object { '{0}: {1} +{2} -> {3} (renew {4})' -f $_.SkuPartNumber, $_.Action, $_.DeltaSeats, $_.Desired, $_.RenewDate }

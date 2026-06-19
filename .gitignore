@@ -5,11 +5,18 @@ logs/
 *.jsonl
 *.log
 
+# Never commit client-specific tenant configs (only the generic template is tracked)
+config/tenants/*.json
+!config/tenants/_template.json
+
 # Never commit the compiled binary
 pax8tools.exe
 
 # Local developer handoff doc (contains internal tenant details)
 PROJECT-STATUS.md
+
+# Local margin-analysis helper (contains a client tenant id)
+Get-MarginEstimate.ps1
 
 # Downloaded Azure Automation module packages
 Microsoft.Graph.*.zip

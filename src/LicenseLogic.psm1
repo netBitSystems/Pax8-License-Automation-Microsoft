@@ -15,15 +15,28 @@ function New-LicensePlan {
 
     foreach ($entry in $TenantConfig.skuMap) {
         $sku = $SkuSummary | Where-Object { $_.SkuPartNumber -eq $entry.skuPartNumber } | Select-Object -First 1
-        if (-not $sku) {
-            Write-Log -Level WARN -Message ("SKU {0} not present in tenant; skipping." -f $entry.skuPartNumber)
-            continue
-        }
 
-        $buffer   = if ($null -ne $entry.buffer)   { [int]$entry.buffer }   else { [int]$Settings.guardrails.defaultBuffer }
-        $maxSeats = if ($null -ne $entry.maxSeats) { [int]$entry.maxSeats } else { [int]$Settings.guardrails.defaultMaxSeats }
-        $assigned = [int]$sku.Consumed
-        $desired  = [math]::Min($assigned + $buffer, $maxSeats)
+        $buffer       = if ($null -ne $entry.buffer)       { [int]$entry.buffer }       else { [int]$Settings.guardrails.defaultBuffer }
+        $maxSeats     = if ($null -ne $entry.maxSeats)     { [int]$entry.maxSeats }     else { [int]$Settings.guardrails.defaultMaxSeats }
+        $initialSeats = if ($null -ne $entry.initialSeats) { [int]$entry.initialSeats } else { 0 }
+        $inTenant     = [bool]$sku
+
+        if ($inTenant) {
+            # License already exists in the tenant: size from real usage. initialSeats is ignored.
+            $assigned  = [int]$sku.Consumed
+            $msEnabled = [int]$sku.Enabled
+            $desired   = [math]::Min($assigned + $buffer, $maxSeats)
+        } else {
+            # License is not in the tenant. Only act if an initial purchase quantity is configured;
+            # otherwise there is no usage signal to size an order from, so skip as before.
+            if ($initialSeats -le 0) {
+                Write-Log -Level WARN -Message ("SKU {0} not present in tenant and no initialSeats set; skipping." -f $entry.skuPartNumber)
+                continue
+            }
+            $assigned  = 0
+            $msEnabled = 0
+            $desired   = [math]::Min($initialSeats, $maxSeats)
+        }
 
         # Current Pax8 quantity for this product, matched by product name hint.
         $pax8Qty = 0
@@ -61,6 +74,9 @@ function New-LicensePlan {
             if ($pax8Sub) {
                 $action = 'topup'
                 $reason = "Pax8 qty $pax8Qty below desired $desired (assigned $assigned + buffer $buffer)"
+            } elseif (-not $inTenant) {
+                $action = 'order'
+                $reason = "New product not yet in tenant; placing initial order of $desired seats"
             } elseif ($renewSoon) {
                 $action = 'transition'
                 $reason = "Renewal date $($renewDate.ToString('yyyy-MM-dd')); order $desired seats on Pax8"
@@ -77,7 +93,7 @@ function New-LicensePlan {
         $plan += [pscustomobject]@{
             SkuPartNumber       = $entry.skuPartNumber
             Product             = $entry.pax8ProductNameHint
-            MsEnabled           = [int]$sku.Enabled
+            MsEnabled           = $msEnabled
             Assigned            = $assigned
             Buffer              = $buffer
             MaxSeats            = $maxSeats

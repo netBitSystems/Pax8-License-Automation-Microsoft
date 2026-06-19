@@ -65,7 +65,7 @@ Recommended first run for any client: set `RunMockExecute = true`, confirm the p
 
 Two credential pairs per deployment, both stored as encrypted Azure Automation variables and never in this repo:
 
-- `Pax8ClientId` and `Pax8ClientSecret`: your Pax8 partner API credential (Pax8 portal, Integrations, API Credentials). The same credential works for every client.
+- `Pax8ClientId` and `Pax8ClientSecret`: your Pax8 partner API credential (Pax8 portal, Integrations, API Credentials). Generate a new key pair per client.
 - `GraphClientId` and `GraphClientSecret`: the Entra app registered in that client's tenant.
 
 To rotate, create a new secret (Entra app or Pax8), update the matching Automation variable, then run once to confirm.

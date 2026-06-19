@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "dryRun": true,
-  "requireApproval": true,
+  "dryRun": false,
+  "requireApproval": false,
   "mode": "Both",
   "leadDays": 14,
   "billingTerm": "Annual",
@@ -16,7 +16,7 @@
     "audience": "https://api.pax8.com",
     "locationMpnId": "6107056",
     "orderedByUserEmail": "services@netbitsystemsllc.com",
-    "useMockOrders": true
+    "useMockOrders": false
   },
   "graph": {
     "scopes": ["Organization.Read.All", "Directory.Read.All"],

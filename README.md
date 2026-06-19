@@ -1,90 +1,117 @@
 # Pax8 License Automation
 
-**New here? Open `START-HERE.md` first. It covers the full setup and add-client workflows in plain English.**
+Keeps each client's Microsoft 365 license quantities on Pax8 matched to actual usage. Every hour it reads how many seats are assigned in the client's tenant, then raises the matching Pax8 subscription so a small spare buffer is always available. It can also stand up a brand-new license the client has never had, and then maintain it from there.
 
-Reusable, multi-tenant automation that manages Microsoft 365 licensing through Pax8. One deployment
-covers any number of clients. The Microsoft side is read-only. Every seat change is a write to Pax8
-only. License assignment to users stays manual in the admin center.
+Microsoft Graph access is read only. Pax8 is the only place the tool ever writes. Assigning licenses to users stays a manual task in the Microsoft admin center.
 
-## What it does
-1. **Overhead report**: per SKU, seats purchased vs assigned vs idle, plus a renewal schedule.
-2. **Dynamic top-up**: keeps a configured spare-seat buffer per SKU by raising the Pax8 quantity when
-   technicians assign licenses the normal way. No group-based licensing.
-3. **Renewal-driven ordering**: when a SKU is not yet on Pax8 and its renewal window opens, orders the
-   right-sized Pax8 subscription automatically. Same Microsoft SKU ID, so no user reassignment needed.
+## How it is deployed
 
-## Safety model (graduated)
-The tooling is designed so you cannot accidentally spend:
-- `dryRun: true` (default): reads everything and logs the exact actions it *would* take. No Pax8 writes.
-- `dryRun: false` + `pax8.useMockOrders: true`: sends orders with `isMock=true`, which validates the
-  order against Pax8 without creating anything or billing.
-- `dryRun: false` + `pax8.useMockOrders: false`: places real orders.
-Guardrails apply at every stage: per-SKU `maxSeats` cap and `perRunMaxIncreasePerSku` ceiling, and
-`requireApproval` can hold real orders for manual confirmation. Decreases are never automated, since
-Microsoft NCE annual terms only allow reductions at renewal.
+One Azure Automation account per client. Everything specific to a client lives in a single Azure Automation variable named `TenantConfig`, which holds a JSON blob. This GitHub repo holds only generic code and reference data. No client details and no secrets are ever stored here.
 
-## Layout
+An hourly runbook (`Start-Pax8LicenseSync.ps1`) downloads this repo on every run, injects that client's `TenantConfig`, and runs the sync. Because the code is pulled fresh each run, pushing to `main` updates every client deployment automatically. The repo is public, so the runbook needs no GitHub token.
+
+## The setup tool: pax8tools.exe
+
+Download `pax8tools.exe` from the Releases page and run it. It is a single Windows executable with a simple menu:
+
+- `[1]` Set up a client: guided, start to finish.
+- `[2]` Add SKUs to an existing client.
+- `[3]` Exit.
+
+### [1] Set up a client
+
+Walks through, in order:
+
+1. Pax8 API credentials (entered once and cached locally).
+2. A Microsoft Entra app registration in the client's tenant: single tenant, with `Organization.Read.All`, `Directory.Read.All`, and `Mail.Send`.
+3. The Azure Automation account: creating it, importing the two Microsoft Graph modules, creating the variables, pasting in the runbook, and linking an hourly schedule.
+4. Client details: new vs existing client, Tenant ID, primary domain, and the Pax8 company (looked up live from Pax8).
+5. License selection: pick the licenses to manage and match each to a Pax8 product.
+
+It then writes the `TenantConfig` JSON, saves a local copy, and copies it to the clipboard. The last step is pasting that JSON into the client's `TenantConfig` Automation variable.
+
+### [2] Add SKUs to an existing client
+
+Pick the client (a local config, or paste the client's current `TenantConfig`), then for each license to add:
+
+1. Search the live Pax8 catalog and choose the product to order.
+2. Pick the matching Microsoft license by friendly name. The list is searched automatically from the Pax8 product name, so there are no SKU codes to type.
+3. Set the spare-seat buffer, the maximum seat cap, and, for a brand-new license, how many seats the first order should buy.
+
+It merges the new entries, saves the updated `TenantConfig`, and copies it to the clipboard to paste back into the Automation variable.
+
+## How the hourly sync decides
+
+For each license in the client's `skuMap`:
+
+- It reads the assigned seat count from the tenant, matched by Microsoft `skuPartNumber`.
+- Target seats = assigned + buffer, capped at `maxSeats`.
+- If the Pax8 quantity is below target, it raises it: a top-up when a Pax8 subscription already exists, or a new order otherwise.
+- Brand-new license: if the license is not in the tenant yet and `initialSeats` is set, it places that first order, then normal top-up takes over once the license shows up in the tenant. `initialSeats` is ignored for a license that already exists in the tenant.
+- It never decreases quantities. Microsoft NCE annual terms only allow reductions at renewal.
+
+## Safety controls
+
+- `RunExecute = false` (Automation variable) stops all purchasing immediately.
+- `RunMockExecute = true` runs the full live path but sends Pax8 orders with `isMock=true`, validating everything without spending. Use this for the first run.
+- `config/settings.json` carries `dryRun`, `requireApproval`, and `pax8.useMockOrders` as additional brakes.
+- `perRunMaxIncreasePerSku` caps how many seats can be added per SKU in one run, and each SKU has its own `maxSeats` cap.
+- Pax8 allows cancelling a new NCE order within 7 days from the portal.
+
+Recommended first run for any client: set `RunMockExecute = true`, confirm the plan in the run output, then switch to `RunExecute = true` and `RunMockExecute = false`.
+
+## Credentials
+
+Two credential pairs per deployment, both stored as encrypted Azure Automation variables and never in this repo:
+
+- `Pax8ClientId` and `Pax8ClientSecret`: your Pax8 partner API credential (Pax8 portal, Integrations, API Credentials). The same credential works for every client.
+- `GraphClientId` and `GraphClientSecret`: the Entra app registered in that client's tenant.
+
+To rotate, create a new secret (Entra app or Pax8), update the matching Automation variable, then run once to confirm. The setup tool also caches the Pax8 credential locally in `config/credentials.json`, which is git-ignored.
+
+## Notifications
+
+The sync emails the configured alert address, sent via Graph `Mail.Send` from the client's own tenant, whenever it takes an action (top-up, transition, or order) or hits an error. Runs with nothing to do send no email.
+
+## Azure Automation variables
+
+Created by the setup tool. Secrets are marked encrypted.
+
+- `GitHubOwnerRepo`, for example `netBitSystems/Pax8-License-Automation-Microsoft`
+- `GitHubBranch`, optional, defaults to `main`
+- `Pax8ClientId`, `Pax8ClientSecret` (encrypted)
+- `GraphClientId`, `GraphClientSecret` (encrypted)
+- `RunMode`, one of `TopUp`, `Transition`, or `Both`
+- `RunExecute`, `true` to place real orders
+- `RunMockExecute`, `true` to run the live path with mock orders
+- `TenantConfig`, the client's JSON config
+
+## Repository layout
+
+- `tools/main.go`: source for `pax8tools.exe`.
+- `Start-Pax8LicenseSync.ps1`: the Azure Automation runbook. Downloads this repo, injects `TenantConfig`, runs the sync.
+- `Invoke-LicenseSync.ps1`: the sync engine entry point.
+- `src/Pax8.psm1`: Pax8 API (token, companies, products, subscriptions, orders).
+- `src/Graph.psm1`: Microsoft Graph, read only.
+- `src/LicenseLogic.psm1`: the decision logic (top-up, transition, order, wait, and brand-new via `initialSeats`).
+- `src/Notify.psm1`: email alerts.
+- `src/Logging.psm1`: structured logging.
+- `config/settings.json`: global settings and guardrails.
+- `config/sku-catalog.json`: curated license list shown in the setup wizard.
+- `config/microsoft-skus.json`: full Microsoft license reference for the friendly-name picker.
+- `config/tenants/_template.json`: reference template. Real client configs are never committed; they live only in each client's `TenantConfig` variable.
+- `tests/Test-NewLicensePlan.ps1`: unit test for the planner logic, with no API calls.
+
+## Building pax8tools.exe
+
+Go is required.
+
 ```
-<project root>
-  README.md
-  config\
-    settings.json            Global defaults, guardrails, Pax8 + Graph + logging settings
-    tenants\
-      _template.json         Blank template - copy this to add a new client
-      <clientname>.json      One file per client (this is all you add for a new client)
-  src\
-    Pax8.psm1                Pax8 API: token, companies, products, subscriptions, orders
-    Graph.psm1               Microsoft Graph read-only (managed identity or app secret)
-    LicenseLogic.psm1        Top-up and ordering decision logic + guardrails
-    Logging.psm1             Structured logging used by everything
-  Invoke-LicenseSync.ps1     Entry point (runbook and local). Dry-run by default.
-  Test-Local.ps1             Local test wrapper (dry-run, mock orders)
-  logs\                      Per-run transcripts and structured action logs
+go build -C tools -o pax8tools.exe .
 ```
 
-## Adding a new client
-Copy `config\tenants\_template.json` to a new file named after the client (e.g. `contoso.json`) and fill in:
-- `tenantKey` (short ID, no spaces, matches the filename without .json)
-- `displayName`, `msTenantId`, `defaultDomain`
-- `pax8CompanyId` (or leave blank and set `pax8CompanyNameHint`; the tool resolves the ID from Pax8)
-- `microsoftProvisioning`: MCA signatory and Microsoft contact for that client
-- `skuMap`: one entry per paid SKU with its Microsoft `skuPartNumber` and `skuId`, a Pax8 product name
-  hint, a `buffer` (spare seats to keep available), and a `maxSeats` cap
-- `ignoreSkuPartNumbers`: free/viral/trial SKUs to skip
-No code changes. The same runbook iterates every file in the tenants folder.
+Then publish the binary on the GitHub Releases page.
 
-## Prerequisites
-- Pax8 API credentials: Pax8 portal > Integrations > API credentials > Create API credential
-  (Partner Admin role). One credential covers every customer company.
-- Microsoft Graph read access: a single tenant can use the Azure Automation managed identity granted
-  `Organization.Read.All` and `Directory.Read.All`. Multi-tenant uses a multi-tenant app over the Pax8
-  partner relationship (confirmed before that step).
-- Secrets are stored in an encrypted Automation variable or Key Vault, never in code.
+## Contributors
 
-## Local testing
-Run `Set-Credentials.ps1` once to store the Graph and Pax8 credentials (encrypted), then run
-`Test-Local.ps1`. It connects to Graph with unattended app auth (no device code) and runs with
-`dryRun` on, so it validates the plan and order shapes without spending.
-
-## Credentials and rotation
-Four values drive the tool: `GraphClientId` / `GraphClientSecret` (the Entra app registration) and
-`Pax8ClientId` / `Pax8ClientSecret` (Pax8 Integrations > API credentials). Use the secret VALUE, not
-the secret's ID.
-Where they live:
-- Local: an encrypted file `config\credentials.local.xml` created by `Set-Credentials.ps1` (DPAPI,
-  readable only by the user and machine that created it). Do not commit it.
-- Azure Automation: Automation account > Variables named `GraphClientId`, `GraphClientSecret`,
-  `Pax8ClientId`, `Pax8ClientSecret` (secrets marked encrypted), or Key Vault. The Automation managed
-  identity can replace the Graph app entirely.
-To update or rotate them (the steps for when you have forgotten all of this):
-1. Get a fresh secret. Graph: Entra > App registrations > Pax8 License Automation > Certificates &
-   secrets > New client secret. Pax8: Pax8 > Integrations > API credentials > new credential.
-2. Store it where the tool reads it. Local: run `Set-Credentials.ps1` and paste the new values.
-   Azure Automation: update the matching Variable or Key Vault secret.
-3. Re-run a dry-run to confirm it connects.
-If a run logs `Graph auth failed` or `Pax8 auth failed`, a secret expired. Do steps 1 to 3.
-
-## Manual step (by design)
-For SKUs being moved onto Pax8 for the first time, turning off auto-renew on the existing Microsoft
-subscription is done by an admin in M365 admin center > Billing > Your products. The tool flags which
-subscriptions are in the renewal window but does not cancel or modify any Microsoft subscriptions itself.
+Primary contributor: drumsey-netbit

@@ -63,7 +63,7 @@ $argz = @{ Mode = $Mode }
 if ($TenantKey)   { $argz.TenantKey   = $TenantKey }
 if ($Execute)     { $argz.Execute     = $true }
 if ($MockExecute) { $argz.MockExecute = $true }
-& $entry @argz
+& $entry @argz 6>&1
 
 Remove-Item -Path $work -Recurse -Force -ErrorAction SilentlyContinue
 Write-Output 'Bootstrap complete.'

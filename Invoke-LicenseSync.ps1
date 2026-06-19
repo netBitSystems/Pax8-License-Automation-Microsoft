@@ -101,7 +101,7 @@ foreach ($tf in $tenantFiles) {
     }
 
     $plan = New-LicensePlan -SkuSummary $skuSummary -TenantConfig $tenant -Settings $settings -Pax8Subscriptions $pax8Subs -Renewals $renewals
-    ($plan | Format-Table SkuPartNumber, Assigned, Pax8Qty, Desired, Action, DeltaSeats, RenewDate -AutoSize | Out-String) | Write-Host
+    $plan | Format-Table SkuPartNumber, Assigned, Pax8Qty, Desired, Action, DeltaSeats, RenewDate -AutoSize | Out-String | Write-Output
 
     $err = 0
     foreach ($p in $plan) {

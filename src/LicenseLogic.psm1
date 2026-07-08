@@ -1,4 +1,14 @@
 # LicenseLogic.psm1 - pure decision logic. Produces a plan; never calls APIs itself.
+function ConvertTo-SkuKey {
+    # Normalize a SKU identifier (skuId or skuPartNumber) for reliable comparison. Strips Unicode
+    # format/control (\p{C}) and separator/whitespace (\p{Z}) characters, then upper-cases. This
+    # neutralizes stray zero-width spaces, non-breaking spaces, and trailing whitespace that can be
+    # pasted into TenantConfig and silently break exact string matching.
+    param([string]$Value)
+    if ([string]::IsNullOrEmpty($Value)) { return '' }
+    return ($Value -replace '[\p{C}\p{Z}]', '').ToUpperInvariant()
+}
+
 function New-LicensePlan {
     [CmdletBinding()]
     param(
@@ -13,7 +23,20 @@ function New-LicensePlan {
     $plan = @()
 
     foreach ($entry in $TenantConfig.skuMap) {
-        $sku = $SkuSummary | Where-Object { $_.SkuPartNumber -eq $entry.skuPartNumber } | Select-Object -First 1
+        # Match the tenant's Graph SKUs to this config entry. Prefer skuId (a stable GUID that is
+        # byte-identical on both sides), then fall back to skuPartNumber for older configs that
+        # predate skuId. Both comparisons are normalized so stray invisible/whitespace characters
+        # (e.g. a zero-width space pasted into TenantConfig) cannot break the match.
+        $entryId = if ($entry.skuId) { ConvertTo-SkuKey $entry.skuId } else { '' }
+        $entryPn = ConvertTo-SkuKey $entry.skuPartNumber
+
+        $sku = $null
+        if ($entryId) {
+            $sku = $SkuSummary | Where-Object { (ConvertTo-SkuKey $_.SkuId) -eq $entryId } | Select-Object -First 1
+        }
+        if (-not $sku -and $entryPn) {
+            $sku = $SkuSummary | Where-Object { (ConvertTo-SkuKey $_.SkuPartNumber) -eq $entryPn } | Select-Object -First 1
+        }
 
         $buffer       = if ($null -ne $entry.buffer)       { [int]$entry.buffer }       else { [int]$Settings.guardrails.defaultBuffer }
         $maxSeats     = if ($null -ne $entry.maxSeats)     { [int]$entry.maxSeats }     else { [int]$Settings.guardrails.defaultMaxSeats }
@@ -29,9 +52,13 @@ function New-LicensePlan {
             # License is not in the tenant. Only act if an initial purchase quantity is configured;
             # otherwise there is no usage signal to size an order from, so skip as before.
             if ($initialSeats -le 0) {
-                Write-Log -Level WARN -Message ("SKU {0} not present in tenant and no initialSeats set; skipping." -f $entry.skuPartNumber)
+                Write-Log -Level WARN -Message ("SKU {0} (skuId {1}) not present in tenant and no initialSeats set; skipping." -f $entry.skuPartNumber, $entry.skuId)
                 continue
             }
+            # Not matched but initialSeats is set: bootstrap a first order. Log it, because a license
+            # that actually exists but failed to match (skuId/skuPartNumber drift from Graph) also
+            # lands here and would otherwise be sized from initialSeats and silently skip the buffer.
+            Write-Log -Level INFO -Message ("SKU {0} (skuId {1}) not matched in tenant; bootstrapping {2} seat(s) from initialSeats. If this license already exists, verify skuId/skuPartNumber in TenantConfig matches Graph." -f $entry.skuPartNumber, $entry.skuId, $initialSeats)
             $assigned  = 0
             $msEnabled = 0
             $desired   = [math]::Min($initialSeats, $maxSeats)
@@ -52,7 +79,12 @@ function New-LicensePlan {
         $renewDate = $null
         if ($Renewals) {
             $r = $Renewals |
-                Where-Object { $_.skuPartNumber -eq $entry.skuPartNumber -and -not $_.isTrial } |
+                Where-Object {
+                    -not $_.isTrial -and (
+                        ($entryId -and $_.skuId -and (ConvertTo-SkuKey $_.skuId) -eq $entryId) -or
+                        ($entryPn -and (ConvertTo-SkuKey $_.skuPartNumber) -eq $entryPn)
+                    )
+                } |
                 Sort-Object { ($_.nextLifecycleDateTime -as [datetime]) } | Select-Object -First 1
             if ($r) {
                 $nd = $r.nextLifecycleDateTime -as [datetime]
@@ -103,6 +135,9 @@ function New-LicensePlan {
 
         $plan += [pscustomobject]@{
             SkuPartNumber       = $entry.skuPartNumber
+            MsSkuId             = if ($sku) { [string]$sku.SkuId } else { '' }
+            MsSkuPartNumber     = if ($sku) { [string]$sku.SkuPartNumber } else { '' }
+            MatchedBy           = if (-not $sku) { 'none' } elseif ($entryId -and (ConvertTo-SkuKey $sku.SkuId) -eq $entryId) { 'skuId' } else { 'skuPartNumber' }
             Product             = $entry.pax8ProductNameHint
             MsEnabled           = $msEnabled
             Assigned            = $assigned

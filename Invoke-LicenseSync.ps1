@@ -88,6 +88,7 @@ foreach ($tf in $tenantFiles) {
     }
 
     $skuSummary = Get-TenantSkuSummary
+    Write-Log -Level INFO -Message ("Graph returned {0} subscribed SKU(s)." -f @($skuSummary).Count) -Data @{ skus = @($skuSummary | ForEach-Object { @{ skuId = [string]$_.SkuId; skuPartNumber = [string]$_.SkuPartNumber; enabled = $_.Enabled; consumed = $_.Consumed } }) }
     $renewals   = Get-TenantSubscriptionRenewals
 
     $companyId = $tenant.pax8CompanyId

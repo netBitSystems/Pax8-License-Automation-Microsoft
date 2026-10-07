@@ -105,6 +105,9 @@ foreach ($tf in $tenantFiles) {
     $plan | Format-Table SkuPartNumber, Assigned, MsEnabled, Pax8Qty, Desired, DesiredPax8, Action, DeltaSeats, RenewDate -AutoSize | Out-String | Write-Output
 
     $err = 0
+    # Real failure reasons (SKU, what was attempted, and what Pax8 said), shown in the alert email and job output.
+    $failures   = [System.Collections.Generic.List[string]]::new()
+    $failedSkus = [System.Collections.Generic.List[string]]::new()
     foreach ($p in $plan) {
         Write-Log -Level DECISION -Message ("{0}: {1} ({2:+#;-#;0})" -f $p.SkuPartNumber, $p.Action, $p.DeltaSeats) -Data $p
 
@@ -134,7 +137,13 @@ foreach ($tf in $tenantFiles) {
             Write-Log -Level WARN -Message ("APPROVAL REQUIRED: {0} {1} {2:+#;-#;0} not auto-executed" -f $p.Action, $p.SkuPartNumber, $p.DeltaSeats)
             continue
         }
-        if (-not $pax8ClientId) { Write-Log -Level ERROR -Message 'Cannot execute without Pax8 credentials.'; continue }
+        if (-not $pax8ClientId) {
+            Write-Log -Level ERROR -Message 'Cannot execute without Pax8 credentials.'
+            $err++
+            $failedSkus.Add([string]$p.SkuPartNumber)
+            $failures.Add(("{0}: {1} {2:+#;-#;0} NOT ATTEMPTED`n  Reason: no usable Pax8 credentials (Pax8 auth failed or the Pax8ClientId/Pax8ClientSecret variables are missing)." -f $p.SkuPartNumber, $p.Action, $p.DeltaSeats))
+            continue
+        }
 
         $useMock = $MockExecute -or [bool]$settings.pax8.useMockOrders
         try {
@@ -155,14 +164,35 @@ foreach ($tf in $tenantFiles) {
                 if ($prodId) {
                     $ctId = Get-Pax8CommitmentTermId -ProductId $prodId -BillingTerm $settings.billingTerm
                     $pd   = Get-MicrosoftProvisioningDetails -TenantConfig $tenant -LocationMpnId $settings.pax8.locationMpnId
-                    New-Pax8Order -CompanyId $companyId -ProductId $prodId -Quantity $targetQty -BillingTerm $settings.billingTerm -CommitmentTermId $ctId -ProvisioningDetails $pd -OrderedByUserEmail $settings.pax8.orderedByUserEmail -IsMock:$useMock
+                    # Some products (e.g. Teams Phone Standard) make Pax8 ask the Microsoft overage question. The answer
+                    # applies to every overage-eligible product on the tenant and is a billing decision, so it is only
+                    # sent when the tenant config sets microsoftProvisioning.includeOverage to 'Yes' or 'No'. It is used
+                    # only if Pax8 rejects the order for that reason; with no setting the order fails with a clear hint.
+                    $orderArgs = @{
+                        CompanyId = $companyId; ProductId = $prodId; Quantity = $targetQty; BillingTerm = $settings.billingTerm
+                        CommitmentTermId = $ctId; ProvisioningDetails = $pd; OrderedByUserEmail = $settings.pax8.orderedByUserEmail
+                    }
+                    $ovrSetting = if ($tenant.microsoftProvisioning) { [string]$tenant.microsoftProvisioning.includeOverage } else { '' }
+                    if ($ovrSetting -match '^\s*(Yes|No)\s*$') { $orderArgs.OverageChoice = $Matches[1] }
+                    New-Pax8Order @orderArgs -IsMock:$useMock
                 } else {
                     Write-Log -Level ERROR -Message ("No Pax8 product ID for {0}; cannot order. Use the onboarding wizard to set pax8ProductId, or add a pax8ProductNameHint to the tenant config." -f $p.SkuPartNumber)
+                    $err++
+                    $failedSkus.Add([string]$p.SkuPartNumber)
+                    $failures.Add(("{0}: {1} {2:+#;-#;0} NOT ATTEMPTED`n  Reason: no Pax8 product ID for this SKU. Set pax8ProductId in TenantConfig, or fix pax8ProductNameHint (currently '{3}')." -f $p.SkuPartNumber, $p.Action, $p.DeltaSeats, $p.Pax8ProductNameHint))
                 }
             }
         } catch {
-            Write-Log -Level ERROR -Message ("Action failed for {0}: {1}" -f $p.SkuPartNumber, $_.Exception.Message)
+            $reason = Get-Pax8ErrorText -ErrorRecord $_
+            if ($reason -match 'overage enablement' -and $reason -match 'required') {
+                $reason += ' || ACTION NEEDED: this product requires an overage answer and none is configured. In the TenantConfig variable, add "includeOverage": "No" (no overage billing) or "Yes" (bill overage to the customer Azure Plan on Pax8) inside "microsoftProvisioning". Note Pax8 applies the choice to every overage-eligible product on this tenant.'
+            }
+            Write-Log -Level ERROR -Message ("Action failed for {0}: {1}" -f $p.SkuPartNumber, $reason)
             $err++
+            $failedSkus.Add([string]$p.SkuPartNumber)
+            $failures.Add(("{0}: {1} {2:+#;-#;0} FAILED (target Pax8 qty {3}, Pax8 product {4}, subscription {5})`n  Reason: {6}" -f $p.SkuPartNumber, $p.Action, $p.DeltaSeats, $targetQty, $(if ($p.Pax8ProductId) { $p.Pax8ProductId } else { '(resolved by name hint)' }), $(if ($p.Pax8SubscriptionId) { $p.Pax8SubscriptionId } else { 'none' }), $reason))
+            # Also surface it in the Automation job output so it is visible without opening the email.
+            Write-Output ("ERROR {0}: {1}" -f $p.SkuPartNumber, $reason)
         }
     }
 
@@ -173,8 +203,13 @@ foreach ($tf in $tenantFiles) {
             '{0}: {1} {2:+#;-#;0} -> {3} (renew {4})' -f $_.SkuPartNumber, $_.Action, $_.DeltaSeats, $_.DesiredPax8, $_.RenewDate
         }
         $subject = 'Pax8 License Sync [{0}] {1} - {2} action(s), {3} error(s)' -f $runType, $tenant.displayName, $actionable.Count, $err
-        $alertBody = "Tenant: {0}`nMode: {1}`n`n{2}" -f $tenant.displayName, $runType, ($lines -join "`n")
-        if ($err) { $alertBody += "`n`n{0} error(s) this run - see the log." -f $err }
+        if ($failedSkus.Count) { $subject += ' (failed: ' + ((@($failedSkus | Select-Object -Unique)) -join ', ') + ')' }
+        $alertBody = "Tenant: {0}`nMode: {1}`nRun time (UTC): {2:u}`n`n{3}" -f $tenant.displayName, $runType, (Get-Date).ToUniversalTime(), ($lines -join "`n")
+        if ($err) {
+            $alertBody += "`n`n{0} error(s) this run." -f $err
+            if ($failures.Count) { $alertBody += "`n`nWHAT FAILED:`n`n" + ($failures -join "`n`n") }
+            else { $alertBody += ' No detail was captured; check the Automation job output.' }
+        }
         # fromMailbox must be in the client's tenant — derive it from the tenant's default domain
         $alertConfig = [pscustomobject]@{
             method      = $settings.alert.method

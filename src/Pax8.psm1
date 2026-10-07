@@ -74,7 +74,17 @@ function Invoke-Pax8 {
                 Start-Sleep -Seconds $wait
                 continue
             }
-            Write-Log -Level ERROR -Message ("Pax8 {0} {1} failed: {2}" -f $Method, $Path, $_.Exception.Message) -Data @{ status = $status }
+            # Pax8 returns the actual failure reason (validation message, missing field, traceId) in the
+            # HTTP response body, not the exception message. PowerShell 7 surfaces that body on
+            # $_.ErrorDetails.Message; fall back to reading the response stream. Without this a 500/422
+            # is impossible to diagnose. The order response body carries no secrets (the token is a header).
+            $respBody = $null
+            if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+                $respBody = $_.ErrorDetails.Message
+            } elseif ($_.Exception.Response) {
+                try { $respBody = $_.Exception.Response.Content.ReadAsStringAsync().GetAwaiter().GetResult() } catch { }
+            }
+            Write-Log -Level ERROR -Message ("Pax8 {0} {1} failed ({2}): {3} | body: {4}" -f $Method, $Path, $status, $_.Exception.Message, $respBody) -Data @{ status = $status; responseBody = $respBody }
             throw
         }
     }
@@ -156,8 +166,14 @@ function Get-Pax8CommitmentTermId {
     $wantTerm = if ($map.ContainsKey($BillingTerm)) { $map[$BillingTerm] } else { $BillingTerm }
     $dep = Invoke-Pax8 -Method GET -Path "products/$ProductId/dependencies"
     $ct = $dep.commitmentDependencies | Where-Object { $_.term -eq $wantTerm } | Select-Object -First 1
-    if ($ct) { return $ct.id }
-    Write-Log -Level WARN -Message ("No commitment term '{0}' found for product {1}." -f $wantTerm, $ProductId)
+    if ($ct) {
+        Write-Log -Level INFO -Message ("Resolved commitment term '{0}' -> {1} for product {2}." -f $wantTerm, $ct.id, $ProductId)
+        return $ct.id
+    }
+    # Log the terms Pax8 actually offers so a term-string mismatch (e.g. '1-Year' vs 'Annual') is visible
+    # instead of silently omitting commitmentTermId, which can make an NCE order fail.
+    $availableTerms = @($dep.commitmentDependencies | ForEach-Object { $_.term }) -join ', '
+    Write-Log -Level WARN -Message ("No commitment term '{0}' found for product {1}. Terms offered: [{2}]." -f $wantTerm, $ProductId, $availableTerms)
     return $null
 }
 
@@ -185,6 +201,71 @@ function Get-MicrosoftProvisioningDetails {
     return $d.ToArray()
 }
 
+function Get-Pax8ErrorText {
+    # Turns a caught ErrorRecord into one readable reason for logs, job output and alert emails.
+    # Pax8 puts the real failure (validation message, missing field) in the HTTP response body, which
+    # PowerShell 7 exposes on ErrorDetails.Message; the exception message alone is just "400 (Bad Request)".
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$ErrorRecord,
+        [int]$MaxLength = 1500
+    )
+    $parts = [System.Collections.Generic.List[string]]::new()
+    $msg = $null
+    if ($ErrorRecord -is [string]) { $msg = $ErrorRecord }
+    elseif ($ErrorRecord.PSObject.Properties['Exception'] -and $ErrorRecord.Exception) { $msg = $ErrorRecord.Exception.Message }
+    if ($msg) { $parts.Add([string]$msg) }
+
+    $body = $null
+    if ($ErrorRecord -isnot [string] -and $ErrorRecord.PSObject.Properties['ErrorDetails'] -and $ErrorRecord.ErrorDetails -and $ErrorRecord.ErrorDetails.Message) {
+        $body = [string]$ErrorRecord.ErrorDetails.Message
+    }
+    if ($body) {
+        $parsed = $null
+        try { $parsed = $body | ConvertFrom-Json -ErrorAction Stop } catch { $parsed = $null }
+        if ($parsed) {
+            $bits = [System.Collections.Generic.List[string]]::new()
+            if ($parsed.PSObject.Properties['message'] -and $parsed.message) { $bits.Add([string]$parsed.message) }
+            if ($parsed.PSObject.Properties['details'] -and $parsed.details) {
+                foreach ($d in @($parsed.details)) {
+                    if ($d -is [string]) { $bits.Add($d) }
+                    elseif ($d.PSObject.Properties['message'] -and $d.message) { $bits.Add([string]$d.message) }
+                }
+            }
+            if ($bits.Count) { $parts.Add('Pax8 said: ' + ($bits -join ' | ')) } else { $parts.Add('Pax8 response: ' + $body) }
+        } else {
+            $parts.Add('Response body: ' + $body)
+        }
+    }
+    $text = ($parts -join ' || ')
+    if ($text.Length -gt $MaxLength) { $text = $text.Substring(0, $MaxLength) + '...(truncated)' }
+    return $text
+}
+
+function Get-Pax8OverageValue {
+    # Exact answer string Pax8 expects for the Microsoft overage enablement question. Read from the
+    # product's own provision-details so wording changes on Pax8's side cannot break the order; the
+    # constants are only a fallback if that lookup fails.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ProductId,
+        [ValidateSet('Yes','No')][string]$Choice = 'No'
+    )
+    $fallback = if ($Choice -eq 'Yes') { 'Yes, my customer has an active Azure Plan subscription through Pax8 to account for any overage charges' } else { 'No, I do not wish to enable overage.' }
+    try {
+        $resp  = Invoke-Pax8 -Method GET -Path "products/$ProductId/provision-details"
+        $items = if ($resp.PSObject.Properties['content']) { $resp.content } else { $resp }
+        $def   = $items | Where-Object { $_.key -eq 'microsoftIncludeOverage' } | Select-Object -First 1
+        if ($def -and $def.possibleValues) {
+            $hit = $def.possibleValues | Where-Object { $_ -match ('^\s*' + $Choice + '\b') } | Select-Object -First 1
+            if ($hit) { return [string]$hit }
+        }
+    } catch {
+        Write-Log -Level WARN -Message ("Could not read provision-details for product {0}; using built-in overage wording. Detail: {1}" -f $ProductId, $_.Exception.Message)
+    }
+    return $fallback
+}
+
 function New-Pax8Order {
     [CmdletBinding()]
     param(
@@ -196,6 +277,12 @@ function New-Pax8Order {
         [int]$LineItemNumber = 1,
         [array]$ProvisioningDetails,
         [string]$OrderedByUserEmail,
+        # Answer used ONLY if Pax8 rejects the order because this product requires the Microsoft overage
+        # enablement question (e.g. Teams Phone Standard). There is deliberately NO default: Pax8 applies the
+        # election to every overage-eligible product on the customer tenant and it is a billing decision, so it
+        # must be set explicitly per tenant (TenantConfig microsoftProvisioning.includeOverage = 'Yes' or 'No').
+        # If it is not supplied, the order fails and the reason is reported instead of guessing.
+        [ValidateSet('Yes','No')][string]$OverageChoice,
         [switch]$IsMock
     )
     $lineItem = [ordered]@{ lineItemNumber = $LineItemNumber; productId = $ProductId; quantity = $Quantity; billingTerm = $BillingTerm }
@@ -206,7 +293,28 @@ function New-Pax8Order {
     $query = @{}
     if ($IsMock) { $query['isMock'] = 'true' }
     Write-Log -Level ACTION -Message ("Pax8 order product {0} qty {1} (mock={2})" -f $ProductId, $Quantity, [bool]$IsMock) -Data $body
-    return Invoke-Pax8 -Method POST -Path 'orders' -Query $query -Body $body
+    try {
+        return Invoke-Pax8 -Method POST -Path 'orders' -Query $query -Body $body
+    } catch {
+        $failure = $_
+        $reason  = Get-Pax8ErrorText -ErrorRecord $failure
+        $alreadySent = $false
+        foreach ($item in @($ProvisioningDetails)) { if ($item -and $item.key -eq 'microsoftIncludeOverage') { $alreadySent = $true } }
+        # A rejected order creates nothing, so one retry cannot double-buy. Only retry for this one
+        # specific, answerable reason; every other failure (and every product that already works) is untouched.
+        if ($OverageChoice -and -not $alreadySent -and $reason -match 'overage enablement' -and $reason -match 'required') {
+            $answer = Get-Pax8OverageValue -ProductId $ProductId -Choice $OverageChoice
+            Write-Log -Level WARN -Message ("Pax8 requires the overage enablement answer for product {0}; retrying once with '{1}'." -f $ProductId, $answer)
+            $retryDetails = [System.Collections.Generic.List[object]]::new()
+            foreach ($item in @($ProvisioningDetails)) { if ($item) { $retryDetails.Add($item) } }
+            $retryDetails.Add([ordered]@{ key = 'microsoftIncludeOverage'; values = @($answer) })
+            $lineItem.provisioningDetails = $retryDetails.ToArray()
+            $body.lineItems = @($lineItem)
+            Write-Log -Level ACTION -Message ("Pax8 order RETRY product {0} qty {1} (mock={2}) with overage answer" -f $ProductId, $Quantity, [bool]$IsMock) -Data $body
+            return Invoke-Pax8 -Method POST -Path 'orders' -Query $query -Body $body
+        }
+        throw
+    }
 }
 
 function Search-Pax8Products {
@@ -240,4 +348,4 @@ function Set-Pax8SubscriptionQuantity {
     return Invoke-Pax8 -Method PUT -Path "subscriptions/$SubscriptionId" -Body $body
 }
 
-Export-ModuleMember -Function Connect-Pax8, Get-Pax8Token, Invoke-Pax8, Get-Pax8AllPages, Get-Pax8Company, Get-Pax8Subscriptions, Get-Pax8Products, Resolve-Pax8ProductId, Search-Pax8Products, Get-Pax8CommitmentTermId, Get-MicrosoftProvisioningDetails, New-Pax8Order, Set-Pax8SubscriptionQuantity
+Export-ModuleMember -Function Connect-Pax8, Get-Pax8Token, Invoke-Pax8, Get-Pax8AllPages, Get-Pax8Company, Get-Pax8Subscriptions, Get-Pax8Products, Resolve-Pax8ProductId, Search-Pax8Products, Get-Pax8CommitmentTermId, Get-MicrosoftProvisioningDetails, New-Pax8Order, Set-Pax8SubscriptionQuantity, Get-Pax8ErrorText, Get-Pax8OverageValue
